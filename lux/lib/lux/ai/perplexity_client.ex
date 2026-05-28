@@ -1,15 +1,19 @@
 defmodule Lux.AI.PerplexityClient do
-  @moduledoc false
-  require Logger
-  @doc """
-  Implements Perplexity AI API client for advanced language model capabilities and specialized knowledge tasks.
+  @moduledoc """
+  Perplexity AI API client implementation
   """
+  
   def query(prompt, _opts \\ []) do
-    # This is a stub - Perplexity integration would be implemented here
-    :ok
+    # Implementation for Perplexity API client
+  end
+  
+  def stream_query(prompt, _opts \\ []) do
+    # Perplexity streaming query implementation
+  end
+  
+  def sync_query(prompt, _opts \\ []) do
   end
   
   defp make_request(_prompt, _opts) do
-    # Implementation would go here
   end
 end
