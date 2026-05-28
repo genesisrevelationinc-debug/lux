@@ -1,156 +1,163 @@
-Looking at this issue, I need to implement a comprehensive Uniswap V3 integration for the Lux framework. Let me analyze the repository structure and create the necessary files.
+Looking at the issue description, this is about implementing Uniswap V3 integration with advanced liquidity management features. Based on the repository structure and the nature of the request, I need to create the core Uniswap V3 integration files.
 
-From the root listing, I can see this is an Elixir project with `lux` and `lux_app` directories. The issue requires:
-1. Concentrated liquidity management
-2. Multi-pool position management
-3. Price range optimization
-4. Fee tier selection
-5. Automated rebalancing
-6. Impermanent loss protection
-7. Position monitoring
-8. Yield optimization
-
-Let me create the core Uniswap V3 integration files. I'll need to infer the structure based on typical Elixir project layouts and the existing files mentioned.
+Let me create the necessary files for Uniswap V3 integration in the lux framework:
 
 ```diff
 --- /dev/null
-+++ b/lux/lib/lux/exchanges/uniswap_v3.ex
-@@ -0,0 +1,298 @@
++++ b/lux/lib/exchanges/uniswap_v3.ex
+@@ -0,0 +1,200 @@
 +defmodule Lux.Exchanges.UniswapV3 do
 +  @moduledoc """
-+  Comprehensive Uniswap V3 integration for advanced liquidity management
-+  and optimal trading strategies.
++  Uniswap V3 integration module for concentrated liquidity management
 +  """
-+
-+  alias Lux.Exchanges.UniswapV3.{
-+    Position,
-+    Pool,
-+    LiquidityRange,
-+    FeeTier,
-+    Rebalancer,
-+    ImpermanentLoss,
-+    PositionMonitor,
-+    YieldOptimizer
-+  }
-+
++  
++  use GenServer
 +  require Logger
-+
-+  @type token_address :: String.t()
-+  @type amount :: Decimal.t() | integer()
-+  @type price :: Decimal.t()
-+  @type tick :: integer()
-+  @type position_id :: non_neg_integer()
-+
-+  # Uniswap V3 contract addresses by chain
-+  @factory_addresses %{
-+    ethereum: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-+    polygon: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-+    arbitrum: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-+    optimism: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
-+    base: "0x33128a8fC178C97ef4b0Cbf58C6354e4Ef77eD09"
-+  }
-+
++  alias Lux.Exchanges.UniswapV3.Position
++  alias Lux.Exchanges.UniswapV3.Pool
++  
++  @fee_tiers [500, 3000, 10000] # 0.05%, 0.3%, 1%
++  
++  defstruct [
++    :name,
++    :chain_id,
++    :factory_address,
++    :router_address,
++    :positions,
++    :pools,
++    :monitoring_enabled
++  ]
++  
 +  @doc """
-+  Returns the factory address for a given chain.
++  Start the Uniswap V3 exchange integration
 +  """
-+  @spec factory_address(atom()) :: String.t()
-+  def factory_address(chain) when is_atom(chain) do
-+    Map.get(@factory_addresses, chain, @factory_addresses[:ethereum])
++  def start_link(opts \\ []) do
++    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 +  end
-+
++  
 +  @doc """
-+  Creates a new concentrated liquidity position.
++  Initialize the Uniswap V3 integration
 +  """
-+  @spec create_position(map()) :: {:ok, Position.t()} | {:error, term()}
-+  def create_position(params) do
-+    with :ok <- validate_position_params(params),
-+         {:ok, optimized_range} <- LiquidityRange.optimize_range(params),
-+         {:ok, fee_tier} <- FeeTier.select_optimal(params),
-+         position_params <- Map.merge(params, %{
-+           tick_lower: optimized_range.tick_lower,
-+           tick_upper: optimized_range.tick_upper,
-+           fee_tier: fee_tier
-+         }),
-+         {:ok, position} <- Position.create(position_params) do
-+      Logger.info("Created Uniswap V3 position: #{position.id}")
-+      {:ok, position}
-+    end
++  def init(opts) do
++    state = %{
++      chain_id: Keyword.get(opts, :chain_id, 1),
++      factory_address: Keyword.get(opts, :factory_address, "0x1F98431c8aD98523631AE4a59f267346ea31F984"),
++      router_address: Keyword.get(opts, :router_address, "0xE592427A0AEce92De3Edee1F18E0157C05861564"),
++      positions: %{},
++      pools: %{},
++      monitoring_enabled: Keyword.get(opts, :monitoring_enabled, true)
++    }
++    
++    {:ok, state}
 +  end
-+
++  
 +  @doc """
-+  Adds liquidity to an existing position.
++  Create a new liquidity position
 +  """
-+  @spec add_liquidity(position_id(), map()) :: {:ok, Position.t()} | {:error, term()}
-+  def add_liquidity(position_id, params) do
-+    with {:ok, position} <- Position.get(position_id),
-+         :ok <- Position.validate_addition(position, params),
-+         {:ok, updated} <- Position.add_liquidity(position, params) do
-+      {:ok, updated}
-+    end
++  def create_position(token0, token1, fee, tick_lower, tick_upper, amount0, amount1) do
++    GenServer.call(__MODULE__, {:create_position, token0, token1, fee, tick_lower, tick_upper, amount0, amount1})
 +  end
-+
++  
 +  @doc """
-+  Removes liquidity from a position.
++  Collect fees from a position
 +  """
-+  @spec remove_liquidity(position_id(), Decimal.t()) :: {:ok, Position.t()} | {:error, term()}
-+  def remove_liquidity(position_id, percentage) do
-+    with {:ok, position} <- Position.get(position_id),
-+         :ok <- Position.validate_removal(position, percentage),
-+         {:ok, updated} <- Position.remove_liquidity(position, percentage) do
-+      {:ok, updated}
-+    end
-+  end
-+
-+  @doc """
-+  Collects fees from a position.
-+  """
-+  @spec collect_fees(position_id()) :: {:ok, map()} | {:error, term()}
 +  def collect_fees(position_id) do
-+    with {:ok, position} <- Position.get(position_id),
-+         {:ok, fees} <- Position.collect_fees(position) do
-+      Logger.info("Collected fees for position #{position_id}: #{inspect(fees)}")
-+      {:ok, fees}
++    GenServer.call(__MODULE__, {:collect_fees, position_id})
++  end
++  
++  @doc """
++  Rebalance a position based on current market conditions
++  """
++  def rebalance_position(position_id, strategy \\ :optimal) do
++    GenServer.call(__MODULE__, {:rebalance_position, position_id, strategy})
++  end
++  
++  @doc """
++  Monitor position health and trigger alerts
++  """
++  def monitor_position(position_id) do
++    GenServer.call(__MODULE__, {:monitor_position, position_id})
++  end
++  
++  @doc """
++  Optimize price ranges for maximum fee collection
++  """
++  def optimize_ranges(token0, token1, current_price) do
++    GenServer.call(__MODULE__, {:optimize_ranges, token0, token1, current_price})
++  end
++  
++  @doc """
++  Get all active positions
++  """
++  def get_positions do
++    GenServer.call(__MODULE__, :get_positions)
++  end
++  
++  # GenServer Callbacks
++  
++  def handle_call({:create_position, token0, token1, fee, tick_lower, tick_upper, amount0, amount1}, _from, state) do
++    position = %Position{
++      id: generate_position_id(),
++      token0: token0,
++      token1: token1,
++      fee: fee,
++      tick_lower: tick_lower,
++      tick_upper: tick_upper,
++      amount0: amount0,
++      amount1: amount1,
++      created_at: DateTime.utc_now(),
++      last_collected: DateTime.utc_now(),
++      fees_earned: %{token0: 0, token1: 0}
++    }
++    
++    # Simulate blockchain interaction
++    result = mint_position(position)
++    
++    new_positions = Map.put(state.positions, position.id, position)
++    new_state = %{state | positions: new_positions}
++    
++    {:reply, {:ok, position.id, result}, new_state}
++  end
++  
++  def handle_call({:collect_fees, position_id}, _from, state) do
++    case Map.get(state.positions, position_id) do
++      nil -> 
++        {:reply, {:error, :position_not_found}, state}
++      position ->
++        # Simulate fee collection
++        collected_fees = simulate_fee_collection(position)
++        updated_position = %{position | 
++          last_collected: DateTime.utc_now(),
++          fees_earned: %{
++            token0: position.fees_earned.token0 + collected_fees.token0,
++            token1: position.fees_earned.token1 + collected_fees.token1
++          }
++        }
++        
++        new_positions = Map.put(state.positions, position_id, updated_position)
++        new_state = %{state | positions: new_positions}
++        
++        {:reply, {:ok, collected_fees}, new_state}
 +    end
 +  end
-+
-+  @doc """
-+  Collects and reinvests fees into the position.
-+  """
-+  @spec reinvest_fees(position_id()) :: {:ok, Position.t()} | {:error, term()}
-+  def reinvest_fees(position_id) do
-+    with {:ok, position} <- Position.get(position_id),
-+         {:ok, fees} <- Position.collect_fees(position),
-+         {:ok, updated} <- Position.reinvest(position, fees) do
-+      Logger.info("Reinvested fees for position #{position_id}")
-+      {:ok, updated}
++  
++  def handle_call({:rebalance_position, position_id, _strategy}, _from, state) do
++    case Map.get(state.positions, position_id) do
++      nil -> 
++        {:reply, {:error, :position_not_found}, state}
++      position ->
++        # Simulate rebalancing logic
++        rebalanced_position = simulate_rebalancing(position)
++        new_positions = Map.put(state.positions, position_id, rebalanced_position)
++        new_state = %{state | positions: new_positions}
++        
++        {:reply, {:ok, rebalanced_position}, new_state}
 +    end
 +  end
++  
++  def handle_call({:monitor_position, position_id}, _from, state) do
++    case Map.get(state.positions, position_id) do
++      nil -> 
++        {:reply, {:error, :position_not_found}, state}
++      position ->
 +
-+  @doc """
-+  Closes a position and withdraws all liquidity.
-+  """
-+  @spec close_position(position_id()) :: {:ok, map()} | {:error, term()}
-+  def close_position(position_id) do
-+    with {:ok, position} <- Position.get(position_id),
-+         {:ok, result} <- Position.close(position) do
-+      Logger.info("Closed position #{position_id}")
-+      {:ok, result}
-+    end
-+  end
-+
-+  @doc """
-+  Gets the health status of a position.
-+  """
-+  @spec position_health(position_id()) :: {:ok, map()} | {:error, term()}
-+  def position_health(position_id) do
-+    with {:ok, position} <- Position.get(position_id),
-+         health <- PositionMonitor.health_check(position) do
-+      {:ok, health}
-+    end
-+  end
-+
-+  @doc """
-+  Rebalances a position based on current market conditions.
-+  """
-+  @spec rebalance_position(position_id(), map()) :: {:ok, Position.t()} | {:error, term()}
-+  def rebalance_position(position_id, opts \\
