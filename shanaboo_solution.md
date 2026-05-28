@@ -1,196 +1,187 @@
 ```diff
---- a/lux/Cargo.toml
-+++ b/lux/Cargo.toml
-@@ -15,6 +15,9 @@
- name = "lux"
- path = "src/lib.rs"
+--- a/lux/mix.exs
++++ b/lux/mix.exs
+@@ -1,4 +1,6 @@
+ defmodule Lux.MixProject do
++  @moduledoc false
++
+   use Mix.Project
  
-+[dev-dependencies]
-+tokio-test = "0.4"
+   def project do
+@@ -15,7 +17,8 @@ defmodule Lux.MixProject do
+         "coveralls.html": :test,
+         "coveralls.json": :test,
+         "coveralls.post": :test,
+-        "coveralls.xml": :test
++        "coveralls.xml": :test,
++        "rust.test": :test
+       ],
+       test_coverage: [tool: ExCoveralls],
+       preferred_cli_env: [
+@@ -24,7 +27,8 @@ defmodule Lux.MixProject do
+         coveralls: :test,
+         "coveralls.html": :test,
+         "coveralls.json": :test,
+-        "coveralls.xml": :test
++        "coveralls.xml": :test,
++        "rust.test": :test
+       ],
+       docs: [
+         main: "readme",
+@@ -55,6 +59,7 @@ defmodule Lux.MixProject do
+       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+       {:excoveralls, "~> 0.18", only: :test},
+       {:mimic, "~> 1.7", only: :test},
++      {:rustler, "~> 0.32.0", runtime: false},
+ 
+       # Code quality
+       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+@@ -64,7 +69,8 @@ defmodule Lux.MixProject do
+       # Data validation
+       {:nimble_options, "~> 1.1"},
+       {:jason, "~> 1.4"},
+-      {:ex_json_schema, "~> 0.10.2"}
++      {:ex_json_schema, "~> 0.10.2"},
++      {:toml, "~> 0.7", runtime: false}
+     ]
+   end
+ 
+@@ -77,7 +83,8 @@ defmodule Lux.MixProject do
+         "hex.audit",
+         "deps.unlock --check-unused",
+         "compile --warnings-as-errors",
+-        "test"
++        "test",
++        "rust.test"
+       ],
+       "hex.audit": ["cmd mix hex.audit || true"]
+     ]
+--- /dev/null
++++ b/lux/lib/lux/rust/testing.ex
+@@ -0,0 +1,218 @@
++defmodule Lux.Rust.Testing do
++  @moduledoc """
++  Testing framework for Rust code in Lux.
 +
- [dependencies]
- rustler = "0.32"
- serde = { version = "1.0", features = ["derive"] }
-@@ -22,3 +25,4 @@
- thiserror = "1.0"
- tokio = { version = "1.0", features = ["full"] }
- tracing = "0.1"
-+lux-test = { path = "../lux_test" }
---- a/lux_test/Cargo.toml
-+++ b/lux_test/Cargo.toml
-@@ -0,0 +0,0 @@
-+[package]
-+name = "lux-test"
-+version = "0.1.0"
-+edition = "2021"
++  Provides utilities for running Rust tests, integrating with `mix test`,
++  and cross-language test helpers.
 +
-+[lib]
-+name = "lux_test"
-+path = "src/lib.rs"
++  ## Examples
 +
-+[dependencies]
-+tokio = { version = "1.0", features = ["full", "test-util"] }
-+tokio-test = "0.4"
-+serde = { version = "1.0", features = ["derive"] }
-+serde_json = "1.0"
-+tracing = "0.1"
-+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-+anyhow = "1.0"
++      # Run all Rust tests
++      Lux.Rust.Testing.run_tests()
 +
-+[dev-dependencies]
-+mockall = "0.12"
-+pretty_assertions = "1.4"
---- a/lux_test/src/lib.rs
-+++ b/lux_test/src/lib.rs
-@@ -0,0 +0,0 @@
-+//! # Lux Test Framework
-+//!
-+//! Comprehensive testing utilities for Lux Rust code with cross-language support.
++      # Run tests with coverage
++      Lux.Rust.Testing.run_tests(coverage: true)
 +
-+pub mod coverage;
-+pub mod fixtures;
-+pub mod runner;
-+pub mod mix;
++      # Run tests for a specific crate
++      Lux.Rust.Testing.run_tests(crate: "my_crate")
 +
-+use std::future::Future;
-+use std::pin::Pin;
++  """
 +
-+/// Re-export commonly used testing types
-+pub use coverage::{CoverageCollector, CoverageReport};
-+pub use fixtures::{AgentFixture, PrismFixture, SignalFixture, TestFixture};
-+pub use runner::{LuxTestRunner, TestConfig};
++  require Logger
 +
-+/// Initialize the test framework for use in tests
-+pub fn init() {
-+    let _ = tracing_subscriber::fmt()
-+        .with_env_filter("debug")
-+        .try_init();
-+}
++  @typedoc "Options for running Rust tests"
++  @type test_options :: [
++          coverage: boolean(),
++          crate: String.t() | nil,
++          features: String.t() | nil,
++          target: String.t() | nil,
++          verbose: boolean()
++        ]
 +
-+/// Helper trait for async test execution with proper setup/teardown
-+pub trait AsyncTest: Send + Sync {
-+    /// Run the test future with framework setup
-+    fn run_test<F, Fut>(&self, f: F) -> Pin<Box<dyn Future<Output = ()> + Send>>
-+    where
-+        F: FnOnce() -> Fut + Send + 'static,
-+        Fut: Future<Output = ()> + Send + 'static,
-+    {
-+        Box::pin(async move {
-+            init();
-+            f().await;
-+        })
-+    }
-+}
++  @doc """
++  Runs Rust tests using cargo.
 +
-+/// Macro for defining async tests with Lux framework integration
-+#[macro_export]
-+macro_rules! lux_test {
-+    ($name:ident, $body:expr) => {
-+        #[tokio::test]
-+        async fn $name() {
-+            $crate::init();
-+            $body
-+        }
-+    };
-+}
++  ## Options
 +
-+/// Macro for defining integration tests with Mix test runner
-+#[macro_export]
-+macro_rules! lux_integration_test {
-+    ($name:ident, $body:expr) => {
-+        #[test]
-+        fn $name() {
-+            $crate::init();
-+            let rt = tokio::runtime::Runtime::new().unwrap();
-+            rt.block_on(async {
-+                $body
-+            });
-+        }
-+    };
-+}
---- a/lux_test/src/coverage.rs
-+++ b/lux_test/src/coverage.rs
-@@ -0,0 +0,0 @@
-+use std::collections::HashMap;
-+use std::sync::{Arc, Mutex};
++    * `:coverage` - Enable coverage reporting (default: false)
++    * `:crate` - Run tests for a specific crate (default: nil)
++    * `:features` - Comma-separated list of features to enable (default: nil)
++    * `:target` - Target triple for cross-compilation (default: nil)
++    * `:verbose` - Enable verbose output (default: false)
 +
-+/// Collects coverage information during test execution
-+#[derive(Debug, Clone, Default)]
-+pub struct CoverageCollector {
-+    hits: Arc<Mutex<HashMap<String, Vec<u32>>>>,
-+}
++  ## Examples
 +
-+impl CoverageCollector {
-+    pub fn new() -> Self {
-+        Self::default()
-+    }
++      iex> Lux.Rust.Testing.run_tests()
++      :ok
 +
-+    /// Record a line hit for a specific file
-+    pub fn hit(&self, file: &str, line: u32) {
-+        let mut hits = self.hits.lock().unwrap();
-+        hits.entry(file.to_string())
-+            .or_default()
-+            .push(line);
-+    }
++      iex> Lux.Rust.Testing.run_tests(coverage: true)
++      :ok
 +
-+    /// Check if a line was hit during execution
-+    pub fn was_hit(&self, file: &str, line: u32) -> bool {
-+        let hits = self.hits.lock().unwrap();
-+        hits.get(file)
-+            .map(|lines| lines.contains(&line))
-+            .unwrap_or(false)
-+    }
++  """
++  @spec run_tests(test_options()) :: :ok | {:error, term()}
++  def run_tests(opts \\ []) do
++    cmd = build_cargo_command(opts)
++    env = build_env(opts)
 +
-+    /// Generate a coverage report
-+    pub fn report(&self) -> CoverageReport {
-+        let hits = self.hits.lock().unwrap();
-+        CoverageReport {
-+            files: hits.clone(),
-+            total_hits: hits.values().map(|v| v.len()).sum(),
-+        }
-+    }
-+}
++    Logger.info("Running Rust tests with: #{Enum.join(cmd, " ")}")
 +
-+/// Coverage report with summary statistics
-+#[derive(Debug, Clone)]
-+pub struct CoverageReport {
-+    pub files: HashMap<String, Vec<u32>>,
-+    pub total_hits: usize,
-+}
++    case System.cmd("cargo", tl(cmd),
++           env: env,
++           into: IO.stream(:stdio, :line),
++           stderr_to_stdout: true,
++           cd: rust_project_path()
++         ) do
++      {_, 0} ->
++        :ok
 +
-+impl CoverageReport {
-+    pub fn coverage_percentage(&self, file: &str, total_lines: u32) -> f64 {
-+        let hits = self.files.get(file).map(|v| v.len()).unwrap_or(0);
-+        if total_lines == 0 {
-+            0.0
-+        } else {
-+            (hits as f64 / total_lines as f64) * 100.0
-+        }
-+    }
-+}
---- a/lux_test/src/fixtures.rs
-+++ b/lux_test/src/fixtures.rs
-@@ -0,0 +0,0 @@
-+use serde::{Deserialize, Serialize};
-+use std::collections::HashMap;
++      {_, exit_code} ->
++        {:error, "Rust tests failed with exit code #{exit_code}"}
++    end
++  end
 +
-+/// Base trait for all test fixtures
-+pub trait TestFixture: Send + Sync {
-+    /// Set up the fixture before test execution
-+    fn setup(&mut self);
-+    /// Tear down the fixture after test execution
-+    fn teardown(&mut self);
-+}
++  @doc """
++  Runs Rust tests and returns the result as a structured map.
++  Useful for programmatic test result processing.
 +
-+/// Fixture for creating test agents
-+#[derive(Debug, Clone, Serialize, Deserialize)]
-+pub struct AgentFixture {
-+    pub name: String,
-+    pub config: HashMap<String, serde_json::Value>,
-+}
++  ## Examples
 +
-+impl AgentFixture {
-+    pub fn new(name: impl Into<String>) -> Self {
-+        Self {
-+            name: name.into(),
-+            config: HashMap
++      iex> Lux.Rust.Testing.run_tests_json()
++      {:ok, %{passed: 10, failed: 0, ignored: 2, duration_ms: 1500}}
++
++  """
++  @spec run_tests_json(test_options()) :: {:ok, map()} | {:error, term()}
++  def run_tests_json(opts \\ []) do
++    cmd = build_cargo_command([:json | opts])
++    env = [{"RUST_TEST_FORMAT", "json"} | build_env(opts)]
++
++    case System.cmd("cargo", tl(cmd),
++           env: env,
++           stderr_to_stdout: true,
++           cd: rust_project_path()
++         ) do
++      {output, 0} ->
++        {:ok, parse_test_output(output)}
++
++      {output, _} ->
++        {:error, parse_test_output(output)}
++    end
++  end
++
++  @doc """
++  Checks if the Rust toolchain is installed and available.
++
++  ## Examples
++
++      iex> Lux.Rust.Testing.rust_available?()
++      true
++
++  """
++  @spec rust_available?() :: boolean()
++  def rust_available? do
++    match?({_, 0}, System.cmd("cargo", ["--version"], stderr_to_stdout: true))
++  end
++
++  @doc """
++  Returns the path to the Rust project directory.
++
++  ## Examples
++
++      iex> Lux.Rust.Testing.rust_project_path()
++      "/path/to/lux/native"
++
++  """
++  @spec rust_project_path() :: String.t()
++  def rust_project_path do
++    Application.get_env(:lux, :rust_project_path,
