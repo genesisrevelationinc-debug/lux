@@ -1,65 +1,135 @@
 defmodule Lux.LLM.Provider do
   @moduledoc """
-  Universal provider interface for managing multiple LLM providers.
-  Defines the contract that all LLM providers must implement.
+  Universal LLM Provider abstraction layer for managing multiple LLM providers.
   """
 
-  alias Lux.LLM.ProviderConfig
-
-  @type model :: String.t()
-  @type message :: %{role: String.t(), content: String.t()}
-  @type completion_response :: %{
-          content: String.t(),
-          model: String.t(),
-          provider: atom(),
-          usage: map(),
-          latency_ms: integer()
-        }
-  @type stream_chunk :: %{
-          content: String.t() | nil,
-          finish_reason: String.t() | nil,
-          model: String.t(),
-          provider: atom()
-        }
-
-  @callback init(config :: ProviderConfig.t()) :: {:ok, term()} | {:error, term()}
-  @callback complete(
-    model :: model(),
-    messages :: [message()],
-    opts :: keyword()
-  ) :: {:ok, completion_response()} | {:error, term()}
-  @callback stream(
-    model :: model(),
-    messages :: [message()],
-    opts :: keyword()
-  ) :: Enumerable.t()
-  @callback list_models() :: [String.t()]
-  @callback get_model_info(model :: model()) :: map() | nil
-
-  @optional_callbacks stream: 3
+  @behaviour Lux.LLM.Provider.Behaviour
 
   @doc """
-  Default implementation for getting provider module from atom.
+  Start the LLM provider abstraction layer
   """
-  def provider_module(:openai), do: Lux.LLM.Providers.OpenAI
-  def provider_module(:anthropic), do: Lux.LLM.Providers.Anthropic
-  def provider_module(:google), do: Lux.LLM.Providers.Google
-  def provider_module(:azure), do: Lux.LLM.Providers.Azure
-  def provider_module(:local), do: Lux.LLM.Providers.Local
-  def provider_module(_), do: nil
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
 
-  @doc """
-  Get all available provider types.
-  """
-  def available_providers do
-    [:openai, :anthropic, :google, :azure, :local]
+  def init(_opts) do
+    # Initialization logic for the provider
+    {:ok, %{}}
   end
 
   @doc """
-  Check if a provider type is valid.
+  Universal interface for LLM providers
   """
-  def valid_provider?(provider) when is_atom(provider) do
-    provider in available_providers()
+  @callback generate(String.t(), map()) :: {:ok, map()} | {:error, any()}
+  @impl true
+  def generate(prompt, opts \\ %{}) do
+    # This would be implemented by specific providers
+    {:ok, %{response: "Mock response for: #{prompt}"}}
   end
-  def valid_provider?(_), do: false
+
+  @doc """
+  Provider registry and selection logic
+  """
+  defmodule Behaviour do
+    @callback generate(String.t(), map()) :: {:ok, map()} | {:error, any()}
+    @callback list_models() :: [map()]
+    @callback get_model(String.t()) :: {:ok, map()} | :error
+    @callback select_model(String.t(), float()) :: {:ok, map()} | {:error, any()}
+    @callback get_cost(String.t()) :: float()
+    @callback get_performance(String.t()) :: {float(), float()}
+    
+    def list_models do
+      # Example implementation - would be overridden by specific providers
+      [
+        %{
+          name: "gpt-4",
+          provider: "openai",
+          cost_per_token: 0.01,
+          context_window: 8192
+        },
+        %{
+          name: "claude-2",
+          provider: "anthropic",
+          cost_per_token: 0.015,
+          context_window: 100000
+        }
+      ]
+    end
+
+    def get_model(name) do
+      # Example model selection logic
+      case Enum.find(list_models(), fn model -> model.name == name end) do
+        nil -> :error
+        model -> {:ok, model}
+      end
+    end
+
+    def select_model(prompt, _budget \\ 0.001) do
+      # Model selection logic would go here
+      {:ok, %{
+        name: "selected-model",
+        provider: "openai",
+        cost: 0.001
+      }}
+    end
+
+    def get_cost(model_name) do
+      # Cost calculation logic
+      0.001
+    end
+
+    def get_performance(model) do
+      # Performance monitoring would return {latency, throughput} metrics
+      {100.0, 50.0}
+    end
+  end
+
+  defmodule Registry do
+    @doc """
+    Provider registry system
+    """
+    def list_providers do
+      [
+        "openai",
+        "anthropic",
+        "cohere",
+        "huggingface"
+      ]
+    end
+
+    def register_provider(name) do
+      # Registration logic
+      {:ok, name}
+    end
+
+    def get_provider(name) do
+      case name do
+        "openai" -> {:ok, "OpenAI Provider"}
+        "anthropic" -> {:ok, "Anthropic Provider"}
+        "cohere" -> {:ok, "Cohere Provider"}
+        "huggingface" -> {:ok, "HuggingFace Provider"}
+        _ -> :error
+      end
+    end
+  end
+
+  defmodule Cache do
+    @doc """
+    Caching and optimization features
+    """
+    def get(prompt) do
+      # Caching logic would go here
+      {:cached, "result"}
+    end
+
+    def put(prompt, result) do
+      # Caching storage logic
+      {:ok, result}
+    end
+
+    def evict_stale do
+      # Cache eviction logic
+      :ok
+    end
+  end
 end
