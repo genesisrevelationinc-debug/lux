@@ -1,16 +1,19 @@
-defmodule Lux.Application do
-  @moduledoc """
-  Perplexity AI integration for Lux
+defmodule Lux.PerplexityAI do
+  @moduledic """
+  Perplexity AI client implementation
   """
-  use GenServer
-  require Logger
-
-  def start(_type, _args) do
-    import Supervisor.Spec
-    children = [
-      worker(Lux.PerplexityAI, [])
-    ]
-    opts = [strategy: :one_for_one, name: Lux.PerplexityAI]
-    Supervisor.start_link(children, opts)
+  
+  @doc """
+  Initialize the Perplex/Perplexity AI client
+  """
+  def client(api_key) do
+    %PerplexityAI{api_key: api_key}
+  end
+  
+  @doc """
+  Make a request to Perplexity AI
+  """
+  def call(prompt) do
+    # Implementation here
   end
 end
