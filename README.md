@@ -1,35 +1,3 @@
-# DeFi Analytics Integration
-
-This document outlines the integration of DeFi analytics capabilities into the Lux framework, enabling comprehensive protocol analysis through DeFiLlama and Dune Analytics.
-
-## Core Implementation
-
-### 1. TVL Data Integration
-- Integrated with DeFiLlama API to fetch Total Value Locked (TVL) data
-- Real-time and historical TVL tracking capabilities
-
-### 2. Protocol Metrics Collection
-- Integration with Dune Analytics for comprehensive protocol metrics
-- Custom query support for specific DeFi metrics
-
-### 3. Yield Tracking System
-- Monitor and track yield opportunities across DeFi protocols
-- Real-time yield analytics and alerting system
-
-### 4. Volume Analytics
-- Track trading volumes and liquidity metrics across supported protocols
-
-### 5. Dashboard Implementation
-- Analytics dashboard for visualizing DeFi metrics and protocol performance
-
-### 6. Alert System
-- Configurable alerts for significant changes in protocol metrics
-
-## Usage
-
-To use the DeFi analytics features:
-
-
 # Lux
 
 <!-- [![Build Status](https://github.com/spectrallabs/lux/workflows/CI/badge.svg)](https://github.com/spectrallabs/lux/actions) -->
@@ -67,17 +35,18 @@ Lux is a powerful language-agnostic framework for building intelligent, adaptive
 - [Beams](lux/guides/beams.livemd) - Workflow orchestration
 - [Lenses](lux/guides/lenses.livemd) - External service integration
 
-### Examples & Guides
-- [Multi-Agent Collaboration](lux/guides/multi_agent_collaboration.livemd) - Build collaborative systems
-- [Trading System](lux/guides/trading_system.livemd) - Complete crypto trading example
-- [Running a Company](lux/guides/running_a_company.livemd) - Multi-agent content creation pipeline
-- [Role Management](lux/guides/role_management.md) - Managing agent roles
-- [Companies](lux/guides/companies.md) - Organizing agents into companies
+## Why Lux?
 
-### Development
-- [Contributing Guide](lux/guides/contributing.md) - Help improve Lux
-- [Testing Guide](lux/guides/testing.md) - Testing your Lux applications
-- [Troubleshooting](lux/guides/troubleshooting.md) - Common issues and solutions
+- 🧠 **Self-Improving Agents**: Agents with built-in reflection capabilities
+- 🚀 **Language Agnostic**: Build agents in your favorite programming language
+- 🔄 **Type-Safe Communication**: Structured data flow with schema validation
+- 🤖 **AI-First**: Deep LLM integration with advanced prompting and context management
+- 🔌 **Extensible**: Easy integration with external services and APIs
+- 📊 **Observable**: Built-in monitoring, metrics, and debugging tools
+- 🧪 **Testable**: Comprehensive testing utilities for deterministic agent behavior
+- 📈 **DeFi Analytics**: Integration with DeFiLlama and Dune Analytics for comprehensive protocol analysis
+
+## Documentation
 
 ## Core Concepts
 
