@@ -35,12 +35,11 @@ Lux is a powerful language-agnostic framework for building intelligent, adaptive
 - [Beams](lux/guides/beams.livemd) - Workflow orchestration
 - [Lenses](lux/guides/lenses.livemd) - External service integration
 
-### Examples & Guides
-- [Multi-Agent Collaboration](lux/guides/multi_agent_collaboration.livemd) - Build collaborative systems
-- [Trading System](lux/guides/trading_system.livemd) - Complete crypto trading example
-- [Running a Company](lux/guides/running_a_company.livemd) - Multi-agent content creation pipeline
-- [Role Management](lux/guides/role_management.md) - Managing agent roles
-- [Companies](lux/guides/companies.md) - Organizing agents into companies
+- 🧪 **Testable**: Comprehensive testing utilities
+
+## Documentation and examples
+
+\ No
 
 ### Development
 - [Contributing Guide](lux/guides/contributing.md) - Help improve Lux
@@ -117,25 +116,10 @@ We welcome contributions! Whether you want to add support for a new language, im
 ## License
 
 Lux is released under the MIT License. See [LICENSE](LICENSE) for details.
-🧪 **Testable**: Comprehensive testing utilities for deterministic agent behavior
 
-## Documentation
-### Analytics Integration
-Lux now includes comprehensive DeFi analytics capabilities:
+### Using GitHub Codespaces
 
-- **TVL Tracking**: Monitor total value locked across protocols
-- **Yield Analytics**: Track yield opportunities across DeFi protocols  
-- **Volume Analytics**: Analyze trading volumes and liquidity metrics
-- **Protocol Metrics**: Comprehensive DeFi protocol analysis
-- **Alerting System**: Automated alerts for significant market movements
-
-### Analytics API
-
-The analytics module provides integration with:
-- DeFiLlama for protocol metrics and TVL data
-- Dune Analytics for custom querying and dashboarding
-
-
+Lux supports development using GitHub Codespaces, providing a pre-configured development environment with all necessary dependencies.
 
 #### Option 1: Using VS Code (Recommended for VS Code users)
 
