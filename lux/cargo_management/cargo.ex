@@ -1,5 +1,9 @@
 defmodule Lux.Cargo do
-  def manage_cargo_toml(project_name, version, dependencies) do
+  @moduledoc \"\"\"
+  Cargo package management system implementation.
+  \"\"\"
+
+  def manage_cargo_toml() do
     # Implementation for managing Cargo.toml files
   end
 end
