@@ -1,135 +1,91 @@
 defmodule Lux.LLM.Provider do
   @moduledoc """
-  Universal LLM Provider abstraction layer for managing multiple LLM providers.
+  Universal provider interface for LLM providers.
+  Defines the contract that all LLM providers must implement.
   """
 
-  @behaviour Lux.LLM.Provider.Behaviour
+  alias Lux.LLM.Schema
+
+  @type model :: String.t()
+  @type message :: %{role: String.t(), content: String.t()}
+  @type completion_response :: {:ok, map()} | {:error, term()}
+  @type stream_response :: Enumerable.t()
+
+  @callback available_models() :: [model()]
+  @callback chat_completion(messages :: [message()], opts :: keyword()) :: completion_response()
+  @callback stream_chat_completion(messages :: [message()], opts :: keyword()) :: stream_response()
+  @callback estimate_cost(model :: model(), input_tokens :: integer(), output_tokens :: integer()) ::
+              Decimal.t() | float()
+  @callback validate_config() :: :ok | {:error, term()}
 
   @doc """
-  Start the LLM provider abstraction layer
+  Gets the default model for a provider.
   """
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
-
-  def init(_opts) do
-    # Initialization logic for the provider
-    {:ok, %{}}
-  end
+  @callback default_model() :: model()
 
   @doc """
-  Universal interface for LLM providers
+  Returns provider capabilities.
   """
-  @callback generate(String.t(), map()) :: {:ok, map()} | {:error, any()}
-  @impl true
-  def generate(prompt, opts \\ %{}) do
-    # This would be implemented by specific providers
-    {:ok, %{response: "Mock response for: #{prompt}"}}
-  end
+  @callback capabilities() :: [atom()]
+
+  @optional_callbacks [
+    stream_chat_completion: 2,
+    estimate_cost: 3,
+    validate_config: 0,
+    capabilities: 0
+  ]
 
   @doc """
-  Provider registry and selection logic
+  Macro to implement the provider behaviour with defaults.
   """
-  defmodule Behaviour do
-    @callback generate(String.t(), map()) :: {:ok, map()} | {:error, any()}
-    @callback list_models() :: [map()]
-    @callback get_model(String.t()) :: {:ok, map()} | :error
-    @callback select_model(String.t(), float()) :: {:ok, map()} | {:error, any()}
-    @callback get_cost(String.t()) :: float()
-    @callback get_performance(String.t()) :: {float(), float()}
-    
-    def list_models do
-      # Example implementation - would be overridden by specific providers
-      [
-        %{
-          name: "gpt-4",
-          provider: "openai",
-          cost_per_token: 0.01,
-          context_window: 8192
-        },
-        %{
-          name: "claude-2",
-          provider: "anthropic",
-          cost_per_token: 0.015,
-          context_window: 100000
-        }
-      ]
-    end
+  defmacro __using__(opts) do
+    quote do
+      @behaviour Lux.LLM.Provider
 
-    def get_model(name) do
-      # Example model selection logic
-      case Enum.find(list_models(), fn model -> model.name == name end) do
-        nil -> :error
-        model -> {:ok, model}
+      @impl true
+      def default_model do
+        unquote(opts[:default_model]) || raise "default_model required"
       end
-    end
 
-    def select_model(prompt, _budget \\ 0.001) do
-      # Model selection logic would go here
-      {:ok, %{
-        name: "selected-model",
-        provider: "openai",
-        cost: 0.001
-      }}
-    end
+      @impl true
+      def capabilities, do: unquote(opts[:capabilities] || [])
 
-    def get_cost(model_name) do
-      # Cost calculation logic
-      0.001
-    end
+      @impl true
+      def validate_config, do: :ok
 
-    def get_performance(model) do
-      # Performance monitoring would return {latency, throughput} metrics
-      {100.0, 50.0}
+      defoverridable validate_config: 0, capabilities: 0, default_model: 0
     end
   end
+end
 
-  defmodule Registry do
-    @doc """
-    Provider registry system
-    """
-    def list_providers do
-      [
-        "openai",
-        "anthropic",
-        "cohere",
-        "huggingface"
-      ]
-    end
+defmodule Lux.LLM.Schema do
+  @moduledoc """
+  Shared schemas and types for LLM operations.
+  """
 
-    def register_provider(name) do
-      # Registration logic
-      {:ok, name}
-    end
+  defmodule Usage do
+    @moduledoc "Token usage information."
+    defstruct [:prompt_tokens, :completion_tokens, :total_tokens, :estimated_cost]
 
-    def get_provider(name) do
-      case name do
-        "openai" -> {:ok, "OpenAI Provider"}
-        "anthropic" -> {:ok, "Anthropic Provider"}
-        "cohere" -> {:ok, "Cohere Provider"}
-        "huggingface" -> {:ok, "HuggingFace Provider"}
-        _ -> :error
-      end
-    end
+    @type t :: %__MODULE__{
+            prompt_tokens: integer(),
+            completion_tokens: integer(),
+            total_tokens: integer(),
+            estimated_cost: Decimal.t() | nil
+          }
   end
 
-  defmodule Cache do
-    @doc """
-    Caching and optimization features
-    """
-    def get(prompt) do
-      # Caching logic would go here
-      {:cached, "result"}
-    end
+  defmodule Completion do
+    @moduledoc "LLM completion response."
+    defstruct [:content, :model, :provider, :usage, :metadata, :finish_reason]
 
-    def put(prompt, result) do
-      # Caching storage logic
-      {:ok, result}
-    end
-
-    def evict_stale do
-      # Cache eviction logic
-      :ok
-    end
+    @type t :: %__MODULE__{
+            content: String.t(),
+            model: String.t(),
+            provider: module(),
+            usage: Usage.t(),
+            metadata: map(),
+            finish_reason: String.t()
+          }
   end
 end
