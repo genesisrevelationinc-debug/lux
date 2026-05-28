@@ -32,7 +32,7 @@
 +  Get historical TVL data for a protocol.
 +  """
 +  @spec get_historical_tvl(protocol_id(), timeframe()) :: {:ok, list()} | {:error, term()}
-+  def get_historical_tvl(protocol_id, timeframe \\ :day) do
++  def get_historical_tvl(protocol_id, timeframe \\ :month) do
 +    DefiLlama.get_historical_tvl(protocol_id, timeframe)
 +  end
 +
@@ -55,7 +55,7 @@
 +  end
 +
 +  @doc """
-+  Get list of all protocols with basic info.
++  Get all protocols with their metrics.
 +  """
 +  @spec list_protocols() :: {:ok, list()} | {:error, term()}
 +  def list_protocols do
@@ -76,26 +76,26 @@
 +  Get yield history for a specific pool.
 +  """
 +  @spec get_yield_history(String.t(), timeframe()) :: {:ok, list()} | {:error, term()}
-+  def get_yield_history(pool_id, timeframe \\ :day) do
++  def get_yield_history(pool_id, timeframe \\ :month) do
 +    DefiLlama.get_yield_history(pool_id, timeframe)
 +  end
 +
 +  # Volume Analysis
 +
 +  @doc """
-+  Get volume data for DEXes.
++  Get volume data for a protocol.
 +  """
-+  @spec get_dex_volumes(chain() | nil) :: {:ok, map()} | {:error, term()}
-+  def get_dex_volumes(chain \\ nil) do
-+    DefiLlama.get_dex_volumes(chain)
++  @spec get_volume(protocol_id(), timeframe()) :: {:ok, map()} | {:error, term()}
++  def get_volume(protocol_id, timeframe \\ :day) do
++    DefiLlama.get_volume(protocol_id, timeframe)
 +  end
 +
 +  @doc """
-+  Get historical volume data.
++  Get DEX volumes across chains.
 +  """
-+  @spec get_volume_history(chain(), timeframe()) :: {:ok, list()} | {:error, term()}
-+  def get_volume_history(chain, timeframe \\ :day) do
-+    DefiLlama.get_volume_history(chain, timeframe)
++  @spec get_dex_volumes(chain() | nil, timeframe()) :: {:ok, map()} | {:error, term()}
++  def get_dex_volumes(chain \\ nil, timeframe \\ :day) do
++    DefiLlama.get_dex_volumes(chain, timeframe)
 +  end
 +
 +  # Custom Query Support (Dune Analytics)
@@ -112,16 +112,16 @@
 +  Get results from a previously executed query.
 +  """
 +  @spec get_query_results(String.t()) :: {:ok, map()} | {:error, term()}
-+  def get_query_results(execution_id) do
-+    DuneAnalytics.get_query_results(execution_id)
++  def get_query_results(query_id) do
++    DuneAnalytics.get_query_results(query_id)
 +  end
 +
 +  @doc """
-+  Execute a parameterized query with parameters.
++  Execute a parameterized query with caching.
 +  """
-+  @spec execute_parameterized_query(String.t(), map()) :: {:ok, map()} | {:error, term()}
-+  def execute_parameterized_query(query_id, parameters) do
-+    DuneAnalytics.execute_parameterized_query(query_id, parameters)
++  @spec execute_cached_query(String.t(), map(), integer()) :: {:ok, map()} | {:error, term()}
++  def execute_cached_query(query_sql, parameters \\ %{}, ttl_seconds \\ 300) do
++    DuneAnalytics.execute_cached_query(query_sql, parameters, ttl_seconds)
 +  end
 +
 +  # Historical Data Access
@@ -129,15 +129,9 @@
 +  @doc """
 +  Get historical data with flexible parameters.
 +  """
-+  @spec get_historical_data(type :: atom(), protocol_id(), timeframe()) ::
-+          {:ok, list()} | {:error, term()}
-+  def get_historical_data(type, protocol_id, timeframe) do
-+    case type do
-+      :tvl -> get_historical_tvl(protocol_id, timeframe)
-+      :volume -> get_volume_history(protocol_id, timeframe)
-+      :yield -> get_yield_history(protocol_id, timeframe)
-+      _ -> {:error, :unsupported_type}
-+    end
++  @spec get_historical_data(type :: atom(), protocol_id(), map()) :: {:ok, list()} | {:error, term()}
++  def get_historical_data(type, protocol_id, options \\ %{}) do
++    DefiLlama.get_historical_data(type, protocol_id, options)
 +  end
 +
 +  # Dashboard
@@ -145,9 +139,17 @@
 +  @doc """
 +  Get dashboard data for a protocol.
 +  """
-+  @spec get_dashboard_data(protocol_id()) :: {:ok, map()} | {:error, term()}
-+  def get_dashboard_data(protocol_id) do
-+    Dashboard.get_data(protocol_id)
++  @spec get_dashboard(protocol_id()) :: {:ok, map()} | {:error, term()}
++  def get_dashboard(protocol_id) do
++    Dashboard.generate(protocol_id)
++  end
++
++  @doc """
++  Get aggregated dashboard for multiple protocols.
++  """
++  @spec get_multi_protocol_dashboard(list(protocol_id())) :: {:ok, map()} | {:error, term()}
++  def get_multi_protocol_dashboard(protocol_ids) do
++    Dashboard.generate_multi(protocol_ids)
 +  end
 +
 +  # Alert System
@@ -161,14 +163,14 @@
 +  end
 +
 +  @doc """
-+  Check all alerts and trigger if conditions are met.
++  Check all alerts and trigger notifications.
 +  """
 +  @spec check_alerts() :: {:ok, list()} | {:error, term()}
 +  def check_alerts do
 +    AlertSystem.check_alerts()
 +  end
-+end
---- /dev/null
-+++ b/lux/lib/lux/integrations/defi_analytics/defi_llama.ex
-@@ -0,0 +1,196 @@
-+defmodule Lux.Integrations.DefiAnalytics.DefiLlama do
++
++  @doc """
++  List all active alerts.
++  """
++  @spec list_alerts()
