@@ -1,6 +1,4 @@
 defmodule Lux.MixProject do
-  @moduledoc false
-
   use Mix.Project
 
   def project do
@@ -13,13 +11,12 @@ defmodule Lux.MixProject do
       dialyzer: [
         plt_add_apps: [:mix],
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
-        "coveralls.html": :test,
-        "coveralls.json": :test,
-        "coveralls.post": :test,
-        "test.rust": :test,
-        docs: :docs
+        plt_core_path: "priv/plts/"
       ],
+      elixirc_paths: elixirc_paths(Mix.env()),
       aliases: aliases(),
+      # Test coverage
+      test_coverage: [tool: ExCoveralls],
       preferred_cli_env: [
         coveralls: :test,
         "coveralls.detail": :test,
@@ -45,67 +42,62 @@ defmodule Lux.MixProject do
       mod: {Lux.Application, []},
       extra_applications: extra_applications(Mix.env())
     ]
-  end
-
-  defp extra_applications(:dev), do: [:logger, :crypto, :wx, :observer, :runtime_tools]
-  defp extra_applications(_), do: [:logger, :crypto]
-
-  defp elixirc_paths(:test), do: ["lib", "test/"]
-  defp elixirc_paths(_), do: ["lib"]
-      {:ex_doc, "~> 0.31", only: :docs, runtime: false},
-      {:excoveralls, "~> 0.18", only: :test},
-      {:mimic, "~> 1.7", only: :test},
-      {:rustler, "~> 0.32.0", optional: true},
-      {:req, "~> 0.5"}
+      {:req, "~> 0.5"},
+      {:nimble_options, "~> 1.1"},
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:rustler, "~> 0.32", runtime: false},
+      {:rustler_precompiled, "~> 0.7"},
+      {:excoveralls, "~> 0.18", only: :test}
     ]
   end
-      "coveralls.detail": "coveralls.detail",
+
+
   defp aliases do
     [
-      setup: ["deps.get", "cmd --cd priv/lux_rs cargo build --release"],
-      "compile.rust": "cmd --cd priv/lux_rs cargo build --release",
-      "test.rust": &test_rust/1
+      extras: ["README.md"],
+      groups_for_modules: [
+        Core: [Lux.Agent, Lux.Signal, Lux.Beam, Lux.Prism],
+        Integrations: [Lux.Integrations],
+        Testing: [Lux.Test, Lux.Test.Rust, Lux.Test.CrossLanguage]
+      ]
+    ]
+  end
     ]
   end
 
-  defp deps do
-    [
-      {:bandit, "~> 1.0"},
-      {:req, "~> 0.5.0"},
-      {:venomous, "~> 0.7.5"},
-      {:crontab, "~> 1.1"},
+      main: "Lux",
+      source_ref: "v#{@version}",
+      extras: extras(),
+      groups_for_extras: groups_for_extras(),
+      before_closing_body_tag: &before_closing_body_tag/1
+    ]
+  end
+
       {:ex_json_schema, "~> 0.10.2"},
       {:nodejs, "~> 3.1"},
       {:ethers, "~> 0.6.4"},
       {:ex_secp256k1, "~> 0.7.4"},
-      {:yaml_elixir, "~> 2.9"},
-      {:hammer, "~> 7.0", only: [:test]},
+        "lux/guides/*.livemd"
       ]
     ]
   end
 
-  defp test_rust(_args) do
-    rust_dir = Path.join(__DIR__, "priv/lux_rs")
-
-    if File.exists?(Path.join(rust_dir, "Cargo.toml")) do
-      IO.puts("Running Rust tests...")
-
-      case System.cmd("cargo", ["test", "--workspace"],
-             cd: rust_dir,
-             stderr_to_stdout: true
-           ) do
-        {_, 0} ->
-          IO.puts("Rust tests passed!")
-
-        {output, status} ->
-          IO.puts("Rust tests failed with exit code #{status}:\n#{output}")
-          exit({:shutdown, status})
-      end
-    else
-      IO.puts("No Rust code found at #{rust_dir}, skipping Rust tests.")
-    end
+  defp before_closing_body_tag(:html) do
+    """
+    <script>
+      // Rust test coverage integration
+      window.LUX_RUST_TEST_CONFIG = {
+        coverageEnabled: true,
+        testRunner: "cargo"
+      };
+    </script>
+    """
   end
+
+  defp before_closing_body_tag(_), do: ""
 end
+      {:dialyxir, "~> 1.4.5", only: :dev, runtime: false},
       {:dotenvy, "~> 1.1.0", only: [:dev, :test]},
       {:mock, "~> 0.3.0", only: [:test]},
       {:stream_data, "~> 1.0", only: [:test]},
