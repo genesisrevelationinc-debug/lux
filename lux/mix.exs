@@ -1,4 +1,6 @@
 defmodule Lux.MixProject do
+  @moduledoc false
+
   use Mix.Project
 
   def project do
@@ -11,12 +13,13 @@ defmodule Lux.MixProject do
       dialyzer: [
         plt_add_apps: [:mix],
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
-        plt_core_path: "priv/plts/"
+        "coveralls.html": :test,
+        "coveralls.json": :test,
+        "coveralls.post": :test,
+        "test.rust": :test,
+        docs: :docs
       ],
-      elixirc_paths: elixirc_paths(Mix.env()),
       aliases: aliases(),
-      # Test coverage
-      test_coverage: [tool: ExCoveralls],
       preferred_cli_env: [
         coveralls: :test,
         "coveralls.detail": :test,
@@ -49,20 +52,22 @@ defmodule Lux.MixProject do
 
   defp elixirc_paths(:test), do: ["lib", "test/"]
   defp elixirc_paths(_), do: ["lib"]
-
+      {:ex_doc, "~> 0.31", only: :docs, runtime: false},
+      {:excoveralls, "~> 0.18", only: :test},
+      {:mimic, "~> 1.7", only: :test},
+      {:rustler, "~> 0.32.0", optional: true},
+      {:req, "~> 0.5"}
+    ]
+  end
+      "coveralls.detail": "coveralls.detail",
   defp aliases do
     [
-      "test.unit": "test --include unit",
-      "test.integration": "test --include integration",
-      coveralls: "coveralls",
-      "coveralls.detail": "coveralls.detail",
-      "coveralls.post": "coveralls.post",
-      "coveralls.html": "coveralls.html",
-      "coveralls.github": "coveralls.github"
+      setup: ["deps.get", "cmd --cd priv/lux_rs cargo build --release"],
+      "compile.rust": "cmd --cd priv/lux_rs cargo build --release",
+      "test.rust": &test_rust/1
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
       {:bandit, "~> 1.0"},
@@ -75,10 +80,32 @@ defmodule Lux.MixProject do
       {:ex_secp256k1, "~> 0.7.4"},
       {:yaml_elixir, "~> 2.9"},
       {:hammer, "~> 7.0", only: [:test]},
-      # test and dev dependencies
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4.5", only: :dev, runtime: false},
+      ]
+    ]
+  end
+
+  defp test_rust(_args) do
+    rust_dir = Path.join(__DIR__, "priv/lux_rs")
+
+    if File.exists?(Path.join(rust_dir, "Cargo.toml")) do
+      IO.puts("Running Rust tests...")
+
+      case System.cmd("cargo", ["test", "--workspace"],
+             cd: rust_dir,
+             stderr_to_stdout: true
+           ) do
+        {_, 0} ->
+          IO.puts("Rust tests passed!")
+
+        {output, status} ->
+          IO.puts("Rust tests failed with exit code #{status}:\n#{output}")
+          exit({:shutdown, status})
+      end
+    else
+      IO.puts("No Rust code found at #{rust_dir}, skipping Rust tests.")
+    end
+  end
+end
       {:dotenvy, "~> 1.1.0", only: [:dev, :test]},
       {:mock, "~> 0.3.0", only: [:test]},
       {:stream_data, "~> 1.0", only: [:test]},
