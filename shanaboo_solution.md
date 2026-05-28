@@ -1,190 +1,174 @@
 ```diff
---- a/lux/lib/lux/analytics.ex
-+++ b/lux/lib/lux/analytics.ex
-@@ -0,0 +1,15 @@
-+defmodule Lux.Analytics do
+--- /dev/null
++++ b/lux/lib/lux/integrations/defi_analytics.ex
+@@ -0,0 +1,212 @@
++defmodule Lux.Integrations.DefiAnalytics do
 +  @moduledoc """
 +  DeFi analytics integration with DeFiLlama and Dune Analytics.
-+  Provides comprehensive protocol analysis including TVL tracking,
-+  protocol metrics, yield analytics, and volume analysis.
++  Provides TVL tracking, protocol metrics, yield analytics, volume analysis,
++  custom query support, historical data access, and alert system.
 +  """
 +
-+  alias Lux.Analytics.DefiLlama
-+  alias Lux.Analytics.Dune
-+  alias Lux.Analytics.Protocol
-+  alias Lux.Analytics.Yield
-+  alias Lux.Analytics.Volume
-+  alias Lux.Analytics.Dashboard
-+  alias Lux.Analytics.Alert
++  alias Lux.Integrations.DefiAnalytics.DefiLlama
++  alias Lux.Integrations.DefiAnalytics.DuneAnalytics
++  alias Lux.Integrations.DefiAnalytics.Dashboard
++  alias Lux.Integrations.DefiAnalytics.AlertSystem
 +
-+  defdelegate get_tvl(protocol \\ nil), to: DefiLlama
-+  defdelegate get_protocols, to: DefiLlama
-+  defdelegate get_protocol_metrics(protocol_id), to: Protocol
-+  defdelegate get_yields, to: Yield
-+  defdelegate get_volume(protocol_id), to: Volume
-+  defdelegate run_query(query_id, params), to: Dune
-+  defdelegate get_dashboard, to: Dashboard
-+  defdelegate subscribe_alert(alert_config), to: Alert
++  @type protocol_id :: String.t()
++  @type chain :: String.t()
++  @type timeframe :: :day | :week | :month | :year
++
++  # TVL Tracking
++
++  @doc """
++  Get current TVL for all protocols or a specific protocol.
++  """
++  @spec get_tvl(protocol_id() | nil) :: {:ok, map()} | {:error, term()}
++  def get_tvl(protocol_id \\ nil) do
++    DefiLlama.get_tvl(protocol_id)
++  end
++
++  @doc """
++  Get historical TVL data for a protocol.
++  """
++  @spec get_historical_tvl(protocol_id(), timeframe()) :: {:ok, list()} | {:error, term()}
++  def get_historical_tvl(protocol_id, timeframe \\ :day) do
++    DefiLlama.get_historical_tvl(protocol_id, timeframe)
++  end
++
++  @doc """
++  Get TVL for a specific chain.
++  """
++  @spec get_chain_tvl(chain()) :: {:ok, map()} | {:error, term()}
++  def get_chain_tvl(chain) do
++    DefiLlama.get_chain_tvl(chain)
++  end
++
++  # Protocol Metrics
++
++  @doc """
++  Get comprehensive metrics for a protocol.
++  """
++  @spec get_protocol_metrics(protocol_id()) :: {:ok, map()} | {:error, term()}
++  def get_protocol_metrics(protocol_id) do
++    DefiLlama.get_protocol_metrics(protocol_id)
++  end
++
++  @doc """
++  Get list of all protocols with basic info.
++  """
++  @spec list_protocols() :: {:ok, list()} | {:error, term()}
++  def list_protocols do
++    DefiLlama.list_protocols()
++  end
++
++  # Yield Analytics
++
++  @doc """
++  Get yield data for pools.
++  """
++  @spec get_yields(filters :: map()) :: {:ok, list()} | {:error, term()}
++  def get_yields(filters \\ %{}) do
++    DefiLlama.get_yields(filters)
++  end
++
++  @doc """
++  Get yield history for a specific pool.
++  """
++  @spec get_yield_history(String.t(), timeframe()) :: {:ok, list()} | {:error, term()}
++  def get_yield_history(pool_id, timeframe \\ :day) do
++    DefiLlama.get_yield_history(pool_id, timeframe)
++  end
++
++  # Volume Analysis
++
++  @doc """
++  Get volume data for DEXes.
++  """
++  @spec get_dex_volumes(chain() | nil) :: {:ok, map()} | {:error, term()}
++  def get_dex_volumes(chain \\ nil) do
++    DefiLlama.get_dex_volumes(chain)
++  end
++
++  @doc """
++  Get historical volume data.
++  """
++  @spec get_volume_history(chain(), timeframe()) :: {:ok, list()} | {:error, term()}
++  def get_volume_history(chain, timeframe \\ :day) do
++    DefiLlama.get_volume_history(chain, timeframe)
++  end
++
++  # Custom Query Support (Dune Analytics)
++
++  @doc """
++  Execute a custom Dune Analytics query.
++  """
++  @spec execute_query(String.t(), map()) :: {:ok, map()} | {:error, term()}
++  def execute_query(query_sql, parameters \\ %{}) do
++    DuneAnalytics.execute_query(query_sql, parameters)
++  end
++
++  @doc """
++  Get results from a previously executed query.
++  """
++  @spec get_query_results(String.t()) :: {:ok, map()} | {:error, term()}
++  def get_query_results(execution_id) do
++    DuneAnalytics.get_query_results(execution_id)
++  end
++
++  @doc """
++  Execute a parameterized query with parameters.
++  """
++  @spec execute_parameterized_query(String.t(), map()) :: {:ok, map()} | {:error, term()}
++  def execute_parameterized_query(query_id, parameters) do
++    DuneAnalytics.execute_parameterized_query(query_id, parameters)
++  end
++
++  # Historical Data Access
++
++  @doc """
++  Get historical data with flexible parameters.
++  """
++  @spec get_historical_data(type :: atom(), protocol_id(), timeframe()) ::
++          {:ok, list()} | {:error, term()}
++  def get_historical_data(type, protocol_id, timeframe) do
++    case type do
++      :tvl -> get_historical_tvl(protocol_id, timeframe)
++      :volume -> get_volume_history(protocol_id, timeframe)
++      :yield -> get_yield_history(protocol_id, timeframe)
++      _ -> {:error, :unsupported_type}
++    end
++  end
++
++  # Dashboard
++
++  @doc """
++  Get dashboard data for a protocol.
++  """
++  @spec get_dashboard_data(protocol_id()) :: {:ok, map()} | {:error, term()}
++  def get_dashboard_data(protocol_id) do
++    Dashboard.get_data(protocol_id)
++  end
++
++  # Alert System
++
++  @doc """
++  Create a new alert.
++  """
++  @spec create_alert(map()) :: {:ok, map()} | {:error, term()}
++  def create_alert(alert_config) do
++    AlertSystem.create_alert(alert_config)
++  end
++
++  @doc """
++  Check all alerts and trigger if conditions are met.
++  """
++  @spec check_alerts() :: {:ok, list()} | {:error, term()}
++  def check_alerts do
++    AlertSystem.check_alerts()
++  end
 +end
 --- /dev/null
-+++ b/lux/lib/lux/analytics/defi_llama.ex
-@@ -0,0 +1,147 @@
-+defmodule Lux.Analytics.DefiLlama do
-+  @moduledoc """
-+  DeFiLlama API integration for TVL tracking and protocol metrics.
-+  """
-+
-+  require Logger
-+
-+  @base_url "https://api.llama.fi"
-+
-+  @doc """
-+  Get TVL data for all protocols or a specific protocol.
-+  """
-+  def get_tvl(protocol \\ nil) do
-+    case protocol do
-+      nil -> request("/protocols")
-+      protocol_name -> request("/tvl/#{protocol_name}")
-+    end
-+  end
-+
-+  @doc """
-+  Get list of all protocols with their TVL data.
-+  """
-+  def get_protocols do
-+    request("/protocols")
-+  end
-+
-+  @doc """
-+  Get detailed data for a specific protocol.
-+  """
-+  def get_protocol_data(protocol) do
-+    request("/protocol/#{protocol}")
-+  end
-+
-+  @doc """
-+  Get historical TVL data for a chain.
-+  """
-+  def get_historical_tvl(chain) do
-+    request("/v2/historicalChainTvl/#{chain}")
-+  end
-+
-+  @doc """
-+  Get current TVL for all chains.
-+  """
-+  def get_chains_tvl do
-+    request("/v2/chains")
-+  end
-+
-+  @doc """
-+  Get yields data from DeFiLlama yields API.
-+  """
-+  def get_yields do
-+    request("/yields", "https://yields.llama.fi")
-+  end
-+
-+  @doc """
-+  Get pools data for yield analysis.
-+  """
-+  def get_yield_pools do
-+    request("/pools", "https://yields.llama.fi")
-+  end
-+
-+  @doc """
-+  Get specific pool data.
-+  """
-+  def get_pool_data(pool_id) do
-+    request("/chart/#{pool_id}", "https://yields.llama.fi")
-+  end
-+
-+  defp request(endpoint, base_url \\ @base_url) do
-+    url = base_url <> endpoint
-+
-+    case HTTPoison.get(url, [], timeout: 30_000, recv_timeout: 30_000) do
-+      {:ok, %{status_code: 200, body: body}} ->
-+        case Jason.decode(body) do
-+          {:ok, data} -> {:ok, data}
-+          {:error, reason} -> {:error, {:decode_failed, reason}}
-+        end
-+
-+      {:ok, %{status_code: status, body: body}} ->
-+        {:error, {:http_error, status, body}}
-+
-+      {:error, reason} ->
-+        {:error, {:request_failed, reason}}
-+    end
-+  end
-+end
---- /dev/null
-+++ b/lux/lib/lux/analytics/dune.ex
-@@ -0,0 +1,120 @@
-+defmodule Lux.Analytics.Dune do
-+  @moduledoc """
-+  Dune Analytics API integration for custom queries and data access.
-+  """
-+
-+  require Logger
-+
-+  @base_url "https://api.dune.com/api/v1"
-+
-+  @doc """
-+  Execute a query and wait for results.
-+  """
-+  def execute_query(query_id, params \\ %{}) do
-+    with {:ok, execution} <- run_query(query_id, params),
-+         {:ok, results} <- get_execution_results(execution.execution_id) do
-+      {:ok, results}
-+    end
-+  end
-+
-+  @doc """
-+  Run a query and return execution metadata.
-+  """
-+  def run_query(query_id, params \\ %{}) do
-+    body = %{
-+      "query_parameters" => params,
-+      "performance" => "medium"
-+    }
-+
-+    request(:post, "/query/#{query_id}/execute", body)
-+  end
-+
-+  @doc """
-+  Get results from a query execution.
-+  """
-+  def get_execution_results(execution_id, opts \\ []) do
-+    limit = Keyword.get(opts, :limit, 1000)
-+    offset = Keyword.get(opts, :offset, 0)
-+
-+    request(:get, "/execution/#{execution_id}/results?limit=#{limit}&offset=#{offset}")
-+  end
-+
-+  @doc """
-+  Get status of a query execution.
-+  """
-+  def get_execution_status(execution_id) do
-+    request(:get, "/execution/#{execution_id}/status")
-+  end
-+
-+  @doc """
-+  Cancel a running query execution.
-+  """
-+  def cancel_execution(execution_id) do
-+    request(:post, "/execution/#{execution_id}/cancel")
-+  end
-+
-+  @doc """
-+  Get list of available queries for the authenticated user.
-+  """
-+  def list_queries(opts \\ []) do
-+    limit = Keyword.get(opts, :limit, 100)
-+    offset = Keyword.get(opts, :offset, 0)
-+
-+    request(:get, "/query/list?limit=#{limit}&offset=#{offset}")
-+  end
-+
-+  defp request(method, endpoint, body \\ nil) do
-+    url = @base_url <> endpoint
-+    headers = [
-+      {"Authorization", "Bearer #{api_key()}"},
-+      {"Content-Type", "application/json"},
++++ b/lux/lib/lux/integrations/defi_analytics/defi_llama.ex
+@@ -0,0 +1,196 @@
++defmodule Lux.Integrations.DefiAnalytics.DefiLlama do
