@@ -1,19 +1,13 @@
 defmodule Lux.PerplexityAI do
-  @moduledic """
-  Perplexity AI client implementation
+  @moduledoc """
+  Perplexity AI client for Lux
   """
   
   @doc """
-  Initialize the Perplex/Perplexity AI client
+  Available models for the Perplexity AI
   """
-  def client(api_key) do
-    %PerplexityAI{api_key: api_key}
-  end
-  
-  @doc """
-  Make a request to Perplexity AI
-  """
-  def call(prompt) do
-    # Implementation here
+  def models() do
+    # Available models would be defined here
+    []
   end
 end
