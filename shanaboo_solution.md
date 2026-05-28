@@ -1,183 +1,163 @@
-Looking at the issue description, I need to implement Uniswap V8 integration with liquidity management features. Based on the repository structure and the nature of the request, I'll create the necessary modules for Uniswap V3 integration.
+Looking at this issue, I need to implement a Uniswap V3 integration for the Lux framework. This is an Elixir project based on the hex.pm badge and the structure. Let me analyze what's needed and create the appropriate files.
 
-Let me create a solution that adds the core Uniswap V3 integration functionality:
+The issue asks for:
+1. Concentrated liquidity management
+2. Multi-pool position management
+3. Price range optimization
+4. Fee tier selection
+5. Automated rebalancing
+6. Impermanent loss protection
+7. Position monitoring
+8. Yield optimization
+
+I'll create the core modules for Uniswap V3 integration in the Lux framework.
 
 ```diff
 --- /dev/null
-+++ b/lux/uniswap_v3/liquidity_manager.ex
-@@ -0,0 +1,200 @@
-+defmodule UniswapV3.LiquidityManager do
++++ b/lux/lib/lux/exchanges/uniswap_v3.ex
+@@ -0,0 +1,218 @@
++defmodule Lux.Exchanges.UniswapV3 do
 +  @moduledoc """
-+  Uniswap V3 Liquidity Manager
++  Uniswap V3 integration for advanced liquidity management.
 +  
-+  This module provides concentrated liquidity management for Uniswap V3 pools,
-+  including position management, fee collection, and automated rebalancing.
++  Provides concentrated liquidity position management, multi-pool
++  strategies, and automated rebalancing with impermanent loss protection.
 +  """
-+
-+  use GenServer
-+  require Logger
-+
-+  defstruct [
-+    :pools,
-+    :positions,
-+    :fee_tiers,
-+    :performance_monitor
-+  ]
-+
-+  @type t :: %__MODULE__{
-+    pools: map(),
-+    positions: map(),
-+    fee_tiers: map(),
-+    performance_monitor: map()
++  
++  alias Lux.Exchanges.UniswapV3.{Position, Pool, FeeTier, PriceRange, LiquidityMath}
++  
++  @type pool_address :: String.t()
++  @type token_address :: String.t()
++  @type token_id :: non_neg_integer()
++  @type liquidity_amount :: non_neg_integer()
++  @type tick_range :: {integer(), integer()}
++  
++  @fee_tiers %{
++    low: 100,      # 0.01% - stable pairs
++    medium: 500,   # 0.05% - standard pairs
++    default: 3000, # 0.3% - most pairs
++    high: 10000    # 1% - exotic pairs
 +  }
-+
++  
 +  @doc """
-+  Start the liquidity manager GenServer
++  Returns all available fee tiers with their use cases.
 +  """
-+  def start_link(opts \\ []) do
-+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
++  @spec fee_tiers() :: map()
++  def fee_tiers, do: @fee_tiers
++  
++  @doc """
++  Selects the optimal fee tier based on pair volatility and volume.
++  """
++  @spec select_fee_tier(volatility :: atom(), volume_usd :: number()) :: non_neg_integer()
++  def select_fee_tier(volatility, volume_usd) when volume_usd > 10_000_000 do
++    case volatility do
++      :very_low -> @fee_tiers[:low]
++      :low -> @fee_tiers[:medium]
++      _ -> @fee_tiers[:default]
++    end
 +  end
-+
-+  @doc """
-+  Initialize the liquidity manager state
-+  """
-+  def init(_opts) do
-+    {:ok, %{
-+      positions: %{},
-+      pools: %{},
-+      fee_tiers: %{
-+        stable: 500,      # 0.05% fee
-+        standard: 3000,   # 0.3% fee
-+        volatile: 10000    # 1% fee
-+      },
-+      performance_monitor: %{}
-+    }}
++  
++  def select_fee_tier(volatility, _volume_usd) do
++    case volatility do
++      :very_low -> @fee_tiers[:medium]
++      :low -> @fee_tiers[:default]
++      :high -> @fee_tiers[:high]
++      _ -> @fee_tiers[:default]
++    end
 +  end
-+
++  
 +  @doc """
-+  Create a new liquidity position in a Uniswap V3 pool
++  Creates a new concentrated liquidity position.
 +  """
-+  def create_position(pool_address, tick_lower, tick_upper, amount0, amount1, fee_tier) do
-+    # Calculate liquidity amount based on token amounts and price range
-+    liquidity = calculate_liquidity(amount0, amount1, tick_lower, tick_upper)
++  @spec create_position(
++    pool :: pool_address(),
++    token0 :: token_address(),
++    token1 :: token_address(),
++    amount0 :: non_neg_integer(),
++    amount1 :: non_neg_integer(),
++    tick_lower :: integer(),
++    tick_upper :: integer(),
++    fee_tier :: non_neg_integer()
++  ) :: {:ok, Position.t()} | {:error, term()}
++  def create_position(pool, token0, token1, amount0, amount1, tick_lower, tick_upper, fee_tier) do
++    with :ok <- validate_tick_range(tick_lower, tick_upper),
++         :ok <- validate_liquidity_amounts(amount0, amount1),
++         :ok <- validate_fee_tier(fee_tier) do
++      position = %Position{
++        id: generate_token_id(),
++        pool: pool,
++        token0: token0,
++        token1: token1,
++        amount0: amount0,
++        amount1: amount1,
++        tick_lower: tick_lower,
++        tick_upper: tick_upper,
++        fee_tier: fee_tier,
++        liquidity: LiquidityMath.calculate_liquidity(amount0, amount1, tick_lower, tick_upper),
++        created_at: DateTime.utc_now(),
++        status: :active
++      }
++      
++      {:ok, position}
++    end
++  end
++  
++  @doc """
++  Closes a position and returns the liquidity with collected fees.
++  """
++  @spec close_position(position :: Position.t()) :: {:ok, map()} | {:error, term()}
++  def close_position(%Position{status: :closed} = _position) do
++    {:error, :position_already_closed}
++  end
++  
++  def close_position(%Position{} = position) do
++    fees_collected = collect_fees(position)
 +    
-+    position = %{
-+      pool: pool_address,
-+      tick_lower: tick_lower,
-+      tick_upper: tick_upper,
-+      liquidity: liquidity,
-+      fee_tier: fee_tier,
-+      token0: amount0,
-+      token1: amount1
++    result = %{
++      token0_returned: position.amount0,
++      token1_returned: position.amount1,
++      fees_collected: fees_collected,
++      total_value_usd: estimate_position_value(position) + fees_collected
 +    }
 +    
-+    {:ok, position}
-+  end
-+
-+  @doc """
-+  Calculate optimal liquidity amount for a position
-+  """
-+  def calculate_liquidity(amount0, amount1, tick_lower, tick_upper) do
-+    # Simplified liquidity calculation
-+    # In practice, this would use Uniswap V3's liquidity math
-+    sqrt_ratio = :math.sqrt(tick_upper / tick_lower)
-+    liquidity = (amount0 * amount1) / (sqrt_ratio * 2)
-+    trunc(liquidity)
++    {:ok, result}
 +  end
 +  
 +  @doc """
-+  Optimize price ranges for maximum fee generation
++  Collects accumulated fees for a position without closing it.
 +  """
-+  def optimize_price_ranges(current_price, volatility, pool_data) do
-+    # Calculate optimal tick ranges based on volatility and price movement
-+    # This is a simplified implementation - real implementation would be more complex
-+    
-+    lower_tick = calculate_optimal_lower_tick(current_price, volatility)
-+    upper_tick = calculate_optimal_upper_tick(current_price, volatility)
-+    
-+    {lower_tick, upper_tick}
-+  end
-+  
-+  defp calculate_optimal_lower_tick(current_price, volatility) do
-+    # Simplified calculation - in practice would use statistical models
-+    # based on historical volatility and price action
-+    current_price * 0.9
-+  end
-+  
-+  defp calculate_optimal_upper_tick(current_price, volatility) do
-+    # Simplified calculation
-+    current_price * 1.1
++  @spec collect_fees(position :: Position.t()) :: non_neg_integer()
++  def collect_fees(%Position{fee_growth_inside0_last: fg0, fee_growth_inside1_last: fg1, liquidity: liq}) do
++    # Simplified fee calculation based on Uniswap V3 fee growth tracking
++    trunc((fg0 + fg1) * liq / 2 ** 128)
 +  end
 +  
 +  @doc """
-+  Get fee collection status for a position
++  Rebalances a position to a new price range based on market conditions.
 +  """
-+  def collect_fees(position_id) do
-+    # Check if fees are available to collect for a position
-+    case get_position_fees_owed(position_id) do
-+      {fees_collected, _} when is_number(fees_collected) and fees_collected > 0 ->
-+        {:ok, fees_collected}
-+      _ ->
-+        {:error, "No fees available for collection"}
++  @spec rebalance_position(
++    position :: Position.t(),
++    new_tick_lower :: integer(),
++    new_tick_upper :: integer()
++  ) :: {:ok, Position.t()} | {:error, term()}
++  def rebalance_position(%Position{status: :active} = position, new_tick_lower, new_tick_upper) do
++    with :ok <- validate_tick_range(new_tick_lower, new_tick_upper),
++         {:ok, _closed} <- close_position(position) do
++      create_position(
++        position.pool,
++        position.token0,
++        position.token1,
++        position.amount0,
++        position.amount1,
++        new_tick_lower,
++        new_tick_upper,
++        position.fee_tier
++      )
 +    end
 +  end
 +  
-+  @doc """
-+  Automatic position adjustment based on price movements
-+  """
-+  def adjust_position(position, price_change_threshold \\ 0.05) do
-+    # Check if position needs rebalancing based on price movement
-+    # This would typically check if current price has moved outside
-+    # the optimal range and adjust accordingly
-+    
-+    # Simplified implementation
-+    if position.in_range?(price_change_threshold) do
-+      # Position is still optimal, no adjustment needed
-+      :ok
-+    else
-+      # Position needs adjustment
-+      adjust_position_range(position)
-+    end
++  def rebalance_position(_position, _new_tick_lower, _new_tick_upper) do
++    {:error, :cannot_rebalance_inactive_position}
 +  end
 +  
 +  @doc """
-+  Monitor position health and performance
-+  """
-+  def monitor_position_health(position) do
-+    # Check various health metrics:
-+    # - Time in range
-+    # - Fee accumulation rate
-+    # - Impermanent loss exposure
-+    # - Liquidity efficiency
-+    
-+    metrics = %{
-+      time_in_range: calculate_time_in_range(position),
-+      fee_efficiency: calculate_fee_efficiency(position),
-+      impermanent_loss: calculate_impermanent_loss(position),
-+      performance_score: calculate_performance_score(position)
-+    }
-+    
-+    metrics
-+  end
-+  
-+  defp calculate_time_in_range(position) do
-+    # Calculate what percentage of time position has been in range
-+    # This is a simplified implementation
-+    case position.status do
-+      :active -> 0.95
-+      :inactive -> 0.30
-+      _ -> 0.50
-+    end
-+  end
-+  
-+  defp calculate_fee_efficiency(position) do
-+    # Calculate fee collection efficiency
-+    # This would typically be based on actual fees collected vs. potential
-+    0.85  # 85% efficiency
-+  end
-+  
-+  defp calculate_impermanent_loss(position) do
-+    # Calculate impermanent loss exposure
-+    # Simplified calculation
-+    0.05  # 5% average impermanent loss
-+  end
