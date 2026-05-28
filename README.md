@@ -1,7 +1,7 @@
 # Lux
 
 <!-- [![Build Status](https://github.com/spectrallabs/lux/workflows/CI/badge.svg)](https://github.com/spectrallabs/lux/actions) -->
-[![Lux CI](https://github.com/Spectral-Finance/lux/actions/workflows/lux-ci.yml/badge.svg)](https://github.com/Spectral-Finance/lux/actions/workflows/lux-ci.yml)
+[![Lux CI](https://github.com/Spectral-Finance/lux/actions/workflows/lux-ci.yml/badge.svg)](https://github.com/Spectral-Finance/lux/actions/workflows/lux-app-ci.yml)
 [![Lux App CI](https://github.com/Spectral-Finance/lux/actions/workflows/lux-app-ci.yml/badge.svg)](https://github.com/Spectral-Finance/lux/actions/workflows/lux-app-ci.yml)
 [![Hex.pm](https://img.shields.io/hexpm/v/lux.svg)](https://hex.pm/packages/lux)
 [![Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/lux)
@@ -29,10 +29,14 @@ Lux is a powerful language-agnostic framework for building intelligent, adaptive
 - [Language Support](lux/guides/language_support.md) - Language integration details
 
 ### Core Concepts
-- [Agents](lux/guides/agents.livemd) - Building intelligent autonomous agents
-- [Signals](lux/guides/signals.livemd) - Type-safe communication between agents
-- [Prisms](lux/guides/prisms.livemd) - Modular functional components
-- [Beams](lux/guides/beams.livemd) - Workflow orchestration
+📚 [Read the full documentation on hexdocs.pm/lux](https://hexdocs.pm/lux)
+
+## Perplexity AI Integration
+
+Lux now includes integration with Perplexity AI for advanced language model capabilities and specialized knowledge tasks. This integration provides access to Perplexity's powerful language models with streaming response support, cost optimization, and specialized model access.
+
+## Documentation
+
 - [Lenses](lux/guides/lenses.livemd) - External service integration
 
 ### Examples & Guides
