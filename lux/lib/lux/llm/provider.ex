@@ -7,59 +7,61 @@ defmodule Lux.LLM.Provider do
   alias Lux.LLM.Config
 
   @type model :: String.t()
-  @type message :: %{role: String.t(), content: String.t()}
-  @type response :: %{content: String.t(), model: model(), usage: map()}
-  @type error :: %{reason: atom(), message: String.t()}
+  @type prompt :: String.t() | list()
+  @type options :: keyword()
+  @type response :: %{content: String.t(), metadata: map()}
+  @type error :: {:error, term()}
 
   @callback available_models() :: [model()]
-  @callback chat(messages :: [message()], config :: Config.t()) ::
-              {:ok, response()} | {:error, error()}
-  @callback complete(prompt :: String.t(), config :: Config.t()) ::
-              {:ok, response()} | {:error, error()}
-  @callback stream(messages :: [message()], config :: Config.t(), callback :: function()) ::
-              {:ok, pid()} | {:error, error()}
-  @callback estimate_cost(model :: model(), tokens :: non_neg_integer()) :: Decimal.t()
-  @callback supports_capability?(model :: model(), capability :: atom()) :: boolean()
+  @callback chat_completion(prompt(), options()) :: {:ok, response()} | error()
+  @callback stream_completion(prompt(), options(), callback :: function()) :: :ok | error()
+  @callback count_tokens(prompt(), model()) :: non_neg_integer()
+  @callback supports_model?(model()) :: boolean()
+  @callback default_config() :: keyword()
 
   @doc """
-  Returns the default model for a provider.
+  Returns the list of available providers.
   """
-  @callback default_model() :: model()
+  def available_providers do
+    Lux.LLM.Registry.list_providers()
+  end
 
   @doc """
-  Validates if a configuration is valid for this provider.
+  Gets a provider module by name.
   """
-  @callback validate_config(config :: map()) :: :ok | {:error, String.t()}
+  def get_provider(name) when is_atom(name) do
+    Lux.LLM.Registry.get(name)
+  end
 
-  @optional_callbacks [stream: 3, estimate_cost: 2, supports_capability?: 2]
-end
-
-defmodule Lux.LLM.Config do
-  @moduledoc """
-  Configuration struct for LLM providers.
+  @doc """
+  Executes a chat completion with automatic provider selection.
   """
+  def chat(prompt, opts \\ []) do
+    provider = select_provider(opts)
+    provider.chat_completion(prompt, opts)
+  end
 
-  @type t :: %__MODULE__{
-          provider: module(),
-          model: String.t() | nil,
-          temperature: float(),
-          max_tokens: non_neg_integer() | nil,
-          timeout: non_neg_integer(),
-          retries: non_neg_integer(),
-          api_key: String.t() | nil,
-          base_url: String.t() | nil,
-          extra_params: map()
-        }
+  @doc """
+  Streams a chat completion with automatic provider selection.
+  """
+  def stream(prompt, opts \\ [], callback) do
+    provider = select_provider(opts)
+    provider.stream_completion(prompt, opts, callback)
+  end
 
-  defstruct [
-    :provider,
-    :model,
-    :temperature,
-    :max_tokens,
-    :timeout,
-    :retries,
-    :api_key,
-    :base_url,
-    :extra_params
-  ]
+  defp select_provider(opts) do
+    model = opts[:model]
+    preferred = opts[:provider]
+
+    cond do
+      preferred && provider = Lux.LLM.Registry.get(preferred) ->
+        provider
+
+      model && provider = Lux.LLM.Registry.find_by_model(model) ->
+        provider
+
+      true ->
+        Lux.LLM.Selector.select_provider(opts)
+    end
+  end
 end
