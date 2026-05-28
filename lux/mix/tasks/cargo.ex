@@ -1,12 +1,12 @@
+defmodule Lux.Mix.Tasks.C0,0 +100 @@
 defmodule Lux.Mix.Tasks.Cargo do
   use Mix.Mix.Task
 
-  @shortdoc \"Manage Cargo dependencies\"
   @moduledoc \"\"\"
   This module handles Cargo package management for Rust projects.
   \"\"\"
 
-  def run(_ args) do
-    # This would be the implementation for the cargo management system
+  def run(_args) do
+    # This would be the implementation for cargo management system
   end
 end
