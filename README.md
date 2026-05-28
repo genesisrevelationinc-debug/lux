@@ -34,12 +34,13 @@ Lux is a powerful language-agnostic framework for building intelligent, adaptive
 - [Prisms](lux/guides/prisms.livemd) - Modular functional components
 - [Beams](lux/guides/beams.livemd) - Workflow orchestration
 - [Lenses](lux/guides/lenses.livemd) - External service integration
+## Why Lux?
 
-### Examples & Guides
-- [Multi-Agent Collaboration](lux/guides/multi_agent_collaboration.livemd) - Build collaborative systems
-- [Trading System](lux/guides/trading_system.livemd) - Complete crypto trading example
-- [Running a Company](lux/guides/running_a_company.livemd) - Multi-agent content creation pipeline
-- [Role Management](lux/guides/role_management.md) - Managing agent roles
+- 🧠 **Self-Improving Agents**: Agents with built-in reflection capabilities (coming soon)
+- 📊 **DeFi Analytics**: Integrated DeFi analytics with DeFiLlama and Dune Analytics
+- 🚀 **Language Agnostic**: Build agents in your favorite programming language
+- 🔄 **Type-Safe Communication**: Structured data flow with schema validation
+- 🤖 **AI-First**: Deep LLM integration with advanced prompting and context management
 - [Companies](lux/guides/companies.md) - Organizing agents into companies
 
 ### Development
