@@ -4,88 +4,62 @@ defmodule Lux.LLM.Provider do
   Defines the contract that all LLM providers must implement.
   """
 
-  alias Lux.LLM.Schema
+  alias Lux.LLM.Config
 
   @type model :: String.t()
   @type message :: %{role: String.t(), content: String.t()}
-  @type completion_response :: {:ok, map()} | {:error, term()}
-  @type stream_response :: Enumerable.t()
+  @type response :: %{content: String.t(), model: model(), usage: map()}
+  @type error :: %{reason: atom(), message: String.t()}
 
   @callback available_models() :: [model()]
-  @callback chat_completion(messages :: [message()], opts :: keyword()) :: completion_response()
-  @callback stream_chat_completion(messages :: [message()], opts :: keyword()) :: stream_response()
-  @callback estimate_cost(model :: model(), input_tokens :: integer(), output_tokens :: integer()) ::
-              Decimal.t() | float()
-  @callback validate_config() :: :ok | {:error, term()}
+  @callback chat(messages :: [message()], config :: Config.t()) ::
+              {:ok, response()} | {:error, error()}
+  @callback complete(prompt :: String.t(), config :: Config.t()) ::
+              {:ok, response()} | {:error, error()}
+  @callback stream(messages :: [message()], config :: Config.t(), callback :: function()) ::
+              {:ok, pid()} | {:error, error()}
+  @callback estimate_cost(model :: model(), tokens :: non_neg_integer()) :: Decimal.t()
+  @callback supports_capability?(model :: model(), capability :: atom()) :: boolean()
 
   @doc """
-  Gets the default model for a provider.
+  Returns the default model for a provider.
   """
   @callback default_model() :: model()
 
   @doc """
-  Returns provider capabilities.
+  Validates if a configuration is valid for this provider.
   """
-  @callback capabilities() :: [atom()]
+  @callback validate_config(config :: map()) :: :ok | {:error, String.t()}
 
-  @optional_callbacks [
-    stream_chat_completion: 2,
-    estimate_cost: 3,
-    validate_config: 0,
-    capabilities: 0
-  ]
-
-  @doc """
-  Macro to implement the provider behaviour with defaults.
-  """
-  defmacro __using__(opts) do
-    quote do
-      @behaviour Lux.LLM.Provider
-
-      @impl true
-      def default_model do
-        unquote(opts[:default_model]) || raise "default_model required"
-      end
-
-      @impl true
-      def capabilities, do: unquote(opts[:capabilities] || [])
-
-      @impl true
-      def validate_config, do: :ok
-
-      defoverridable validate_config: 0, capabilities: 0, default_model: 0
-    end
-  end
+  @optional_callbacks [stream: 3, estimate_cost: 2, supports_capability?: 2]
 end
 
-defmodule Lux.LLM.Schema do
+defmodule Lux.LLM.Config do
   @moduledoc """
-  Shared schemas and types for LLM operations.
+  Configuration struct for LLM providers.
   """
 
-  defmodule Usage do
-    @moduledoc "Token usage information."
-    defstruct [:prompt_tokens, :completion_tokens, :total_tokens, :estimated_cost]
+  @type t :: %__MODULE__{
+          provider: module(),
+          model: String.t() | nil,
+          temperature: float(),
+          max_tokens: non_neg_integer() | nil,
+          timeout: non_neg_integer(),
+          retries: non_neg_integer(),
+          api_key: String.t() | nil,
+          base_url: String.t() | nil,
+          extra_params: map()
+        }
 
-    @type t :: %__MODULE__{
-            prompt_tokens: integer(),
-            completion_tokens: integer(),
-            total_tokens: integer(),
-            estimated_cost: Decimal.t() | nil
-          }
-  end
-
-  defmodule Completion do
-    @moduledoc "LLM completion response."
-    defstruct [:content, :model, :provider, :usage, :metadata, :finish_reason]
-
-    @type t :: %__MODULE__{
-            content: String.t(),
-            model: String.t(),
-            provider: module(),
-            usage: Usage.t(),
-            metadata: map(),
-            finish_reason: String.t()
-          }
-  end
+  defstruct [
+    :provider,
+    :model,
+    :temperature,
+    :max_tokens,
+    :timeout,
+    :retries,
+    :api_key,
+    :base_url,
+    :extra_params
+  ]
 end
