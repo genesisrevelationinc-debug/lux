@@ -1,0 +1,17 @@
+# PancakeSwap Integration Guide
+
+This guide explains how to integrate PancakeSwap yield farming and liquidity provision into your Lux multi-agent system.
+
+## Overview
+
+PancakeSwap integration enables agents to:
+- Manage liquidity positions across multiple chains
+- Automate yield farming strategies
+- Implement auto-compounding mechanisms
+- Track and optimize APY
+- Monitor risks and positions
+
+## Prerequisites
+
+Ensure you have the following dependencies:
+
