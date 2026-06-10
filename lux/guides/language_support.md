@@ -1,3 +1,57 @@
+# Language Support
+
+Lux is designed to be language-agnostic, enabling developers to build components in multiple programming languages. This guide covers the language integration capabilities of Lux.
+
+## Supported Languages
+
+### Elixir (Primary)
+Elixir is the primary language for Lux development, offering full access to all framework features.
+
+### Rust
+Rust support enables high-performance native components with full framework integration. See the [Rust Components Guide](rust_components.md) for details.
+
+## Language Integration Architecture
+
+Lux uses a unified component model where components defined in any supported language can interoperate seamlessly. The framework handles:
+
+- Component registration and discovery
+- Type-safe communication between components
+- Lifecycle management
+- Error handling and observability
+
+## Adding New Language Support
+
+To add support for a new language, implement the component definition traits and register the language runtime with Lux.
+
+--- a/lux/guides/rust_components.md
+-- a/lux/guides/rust_components.md
++ b/lux/guides/rust_components.md
+# Rust Component Definition Guide
+
+Lux supports defining components (Prisms and Beams) in Rust, enabling high-performance native components with full framework integration.
+
+## Overview
+
+Rust components in Lux provide:
+- **High Performance**: Native execution speed for compute-intensive operations
+- **Full Integration**: Seamless interoperability with Elixir components
+- **Type Safety**: Compile-time guarantees for component interfaces
+- **Async/Await**: Full async support for I/O-bound operations
+- **Lifecycle Management**: Proper initialization, execution, and cleanup
+
+## Prerequisites
+
+- Rust toolchain (1.70+)
+- Elixir and Lux installed
+- `rustler` for Elixir-Rust interop
+
+## Getting Started
+
+### 1. Add Rust to Your Lux Project
+
+Add the following to your `mix.exs`:
+
+
 # Language Support in Lux
 
 Lux is designed to be language-agnostic, allowing you to build agents in your preferred programming language. This guide provides an overview of language support in Lux and how to use different programming languages in your agents.
@@ -86,4 +140,5 @@ Want to add support for a new language? Check our [Contributing Guide](contribut
 4. Document the integration
 5. Submit a pull request
 
++ b/lux/guides/language_support.md
 For detailed examples and up-to-date documentation, visit [hexdocs.pm/lux](https://hexdocs.pm/lux). 
