@@ -1,212 +1,207 @@
  ```diff
---- a/lux/native/lux_rust/src/lib.rs
-+++ b/lux/native/lux_rust/src/lib.rs
-@@ -1,3 +1,5 @@
-+pub mod component;
-+pub mod prism;
-+pub mod beam;
- pub mod rustex;
- 
- use std::sync::Once;
-@@ -15,6 +17,9 @@
- #[rustler::nif]
- fn add(a: i64, b: i64) -> i64 {
-     a + b
- }
- 
- rustler::init!("Elixir.Lux.Rust");
+--- a/lux/lib/lux/rust.ex
++++ b/lux/lib/lux/rust.ex
+@@ -0,0 +1,45 @@
++defmodule Lux.Rust do
++  @moduledoc """
++  Module for managing Rust-based components in Lux.
++  Provides utilities for compiling, loading, and interacting with Rust NIFs.
++  """
 +
-+pub use component::{Component, ComponentTrait, ComponentContext, ComponentResult};
-+pub use prism::{Prism, PrismTrait};
-+pub use beam::{Beam, BeamTrait};
---- /dev/null
-+++ b/lux/native/lux_rust/src/component.rs
-@@ -0,0 +1,218 @@
-+use std::collections::HashMap;
-+use std::future::Future;
-+use std::pin::Pin;
++  @doc """
++  Returns the path to the Rust source directory for a given component.
++  """
++  def rust_source_path(component_name) when is_binary(component_name) do
++    Path.join([Application.app_dir(:lux), "priv", "rust", component_name])
++  end
 +
-+/// Result type for component operations
-+pub type ComponentResult<T> = Result<T, ComponentError>;
++  @doc """
++  Compiles a Rust component using cargo.
++  """
++  def compile_component(component_name) do
++    source_path = rust_source_path(component_name)
++    
++    case System.cmd("cargo", ["build", "--release"], cd: source_path) do
++      {_, 0} -> {:ok, :compiled}
++      {error, _} -> {:error, error}
++    end
++  end
 +
-+/// Errors that can occur during component execution
-+#[derive(Debug, Clone)]
-+pub enum ComponentError {
-+    ExecutionError(String),
-+    ValidationError(String),
-+    TimeoutError,
-+    Cancelled,
-+}
++  @doc """
++  Loads a compiled Rust NIF for a component.
++  """
++  def load_nif(component_name) do
++    nif_path = Path.join([
++      Application.app_dir(:lux),
++      "priv",
++      "rust",
++      component_name,
++      "target",
++      "release",
++      "lib#{component_name}.so"
++    ])
++    
++    case :erlang.load_nif(String.to_charlist(nif_path), 0) do
++      :ok -> :ok
++      {:error, {:already_loaded, _}} -> :ok
++      error -> error
++    end
++  end
++end
+--- a/lux/lib/lux/prism/rust.ex
++++ b/lux/lib/lux/prism/rust.ex
+@@ -0,0 +1,120 @@
++defmodule Lux.Prism.Rust do
++  @moduledoc """
++  Base module for defining Prisms in Rust.
++  
++  This module provides the macro and utilities for creating high-performance
++  native Prisms components with full framework integration.
++  
++  ## Example
++  
++      defmodule MyApp.RustPrism do
++        use Lux.Prism.Rust,
++          name: "my_rust_prism",
++          source: "native/my_rust_prism"
++      
++        def run(input, context) do
++          # Calls the Rust NIF
++          call_rust(input, context)
++        end
++      end
++  """
 +
-+impl std::fmt::Display for ComponentError {
-+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-+        match self {
-+            ComponentError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
-+            ComponentError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
-+            ComponentError::TimeoutError => write!(f, "Operation timed out"),
-+            ComponentError::Cancelled => write!(f, "Operation was cancelled"),
-+‐        }
-+    }
-+}
++  alias Lux.Rust
 +
-+impl std::error::Error for ComponentError {}
++  @doc false
++  defmacro __using__(opts) do
++    rust_source = Keyword.get(opts, :source)
++    rust_name = Keyword.get(opts, :name)
++    
++    quote do
++      @behaviour Lux.Prism
++      
++      @rust_source unquote(rust_source)
++      @rust_name unquote(rust_name)
++      @rust_module __MODULE__
++      
++      require Logger
++      
++      @before_compile unquote(__MODULE__)
++    end
++  end
 +
-+/// Context passed to components during execution
-+#[derive(Debug, Clone)]
-+pub struct ComponentContext {
-+    pub params: HashMap<String, serde_json::Value>,
-+    pub metadata: HashMap<String, String>,
-+}
++  @doc false
++  defmacro __before_compile__(_env) do
++    quote do
++      @impl true
++      def run(input, context) do
++        call_rust(input, context)
++      end
++      
++      @doc """
++      Calls the Rust NIF with the given input and context.
++      """
++      def call_rust(input, context) do
++        case :erlang.function_exported(@rust_module, :nif_run, 2) do
++          true -> apply(@rust_module, :nif_run, [input, context])
++          false -> {:error, :nif_not_loaded}
++        end
++      end
++      
++      @doc """
++      Compiles the Rust source code for this prism.
++      """
++      def compile do
++        Rust.compile_component(@rust_name)
++      end
++      
++      @doc """
++      Loads the compiled NIF.
++      """
++      def load_nif do
++        Rust.load_nif(@rust_name)
++      end
++    end
++  end
++end
+--- a/lux/lib/lux/beam/rust.ex
++++ b/lux/lib/lux/beam/rust.ex
+@@ -0,0 +1,120 @@
++defmodule Lux.Beam.Rust do
++  @moduledoc """
++  Base module for defining Beams in Rust.
++  
++  This module provides the macro and utilities for creating high-performance
++  native Beam components with full framework integration.
++  
++  ## Example
++  
++      defmodule MyApp.RustBeam do
++        use Lux.Beam.Rust,
++          name: "my_rust_beam",
++          source: "native/my_rust_beam"
++      
++        def run(input, context) do
++          # Calls the Rust NIF
++          call_rust(input, context)
++        end
++      end
++  """
 +
-+impl ComponentContext {
-+    pub fn new() -> Self {
-+        Self {
-+            params: HashMap::new(),
-+            metadata: HashMap::new(),
-+        }
-+    }
++  alias Lux.Rust
 +
-+    pub fn with_param(mut self, key: &str, value: serde_json::Value) -> Self {
-+        self.params.insert(key.to_string(), value);
-+        self
-+    }
++  @doc false
++  defmacro __using__(opts) do
++    rust_source = Keyword.get(opts, :source)
++    rust_name = Keyword.get(opts, :name)
++    
++    quote do
++      @behaviour Lux.Beam
++      
++      @rust_source unquote(rust_source)
++      @rust_name unquote(rust_name)
++      @rust_module __MODULE__
++      
++      require Logger
++      
++      @before_compile unquote(__MODULE__)
++    end
++  end
 +
-+    pub fn get_param(&self, key: &str) -> Option<&serde_json::Value> {
-+        self.params.get(key)
-+    }
-+}
-+
-+impl Default for ComponentContext {
-+    fn default() -> Self {
-+        Self::new()
-+    }
-+}
-+
-+/// Core trait for all Lux components
-+pub trait ComponentTrait: Send + Sync {
-+    /// Unique identifier for the component
-+    fn id(&self) -> &str;
-+
-+    /// Human-readable name
-+    fn name(&self) -> &str;
-+
-+    /// Component description
-+    fn description(&self) -> &str;
-+
-+    /// Initialize the component
-+    fn init(&mut self) -> ComponentResult<()>;
-+
-+    /// Execute the component with given input and context
-+    fn execute<'a>(
-+        &'a self,
-+        input: serde_json::Value,
-+        context: ComponentContext,
-+    ) -> Pin<Box<dyn Future<Output = ComponentResult<serde_json::Value>> + Send + 'a>>;
-+
-+    /// Clean up resources
-+    fn cleanup(&mut self) -> ComponentResult<()>;
-+}
-+
-+/// Base component struct that can be extended
-+pub struct Component {
-+    pub id: String,
-+    pub name: String,
-+    pub description: String,
-+    pub version: String,
-+}
-+
-+impl Component {
-+    pub fn new(id: &str, name: &str, description: &str) -> Self {
-+        Self {
-+            id: id.to_string(),
-+            name: name.to_string(),
-+            description: description.to_string(),
-+            version: "1.0.0".to_string(),
-+        }
-+    }
-+}
-+
-+/// Macro to define a component easily
-+#[macro_export]
-+macro_rules! define_component {
-+    (
-+        $vis:vis struct $name:ident {
-+            id: $id:expr,
-+            name: $name_str:expr,
-+            description: $description:expr,
-+            $($field:ident: $ty:ty),* $(,)?
-+        }
-+    ) => {
-+        pub struct $name {
-+            pub component: $crate::component::Component,
-+            $(pub $field: $ty,)*
-+        }
-+
-+        impl $name {
-+            pub fn new($($field: $ty),*) -> Self {
-+                Self {
-+                    component: $crate::component::Component::new(
-+                        $id,
-+                        $name_str,
-+                        $description,
-+                    ),
-+                    $($field,)*
-+                }
-+            }
-+        }
-+
-+        impl $crate::component::ComponentTrait for $name {
-+            fn id(&self) -> &str {
-+                &self.component.id
-+            }
-+
-+            fn name(&self) -> &str {
-+                &self.component.name
-+            }
-+
-+            fn description(&self) -> &str {
-+                &self.component.description
-+            }
-+
-+            fn init(&mut self) -> $crate::component::ComponentResult<()> {
-+                Ok(())
-+            }
-+
-+            fn execute<'a>(
-+                &'a self,
-+                input: serde_json::Value,
-+                context: $crate::component::ComponentContext,
-+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = $crate::component::ComponentResult<serde_json::Value>> + Send + 'a>> {
-+                Box::pin(async move {
-+                    Err($crate::component::ComponentError::ExecutionError(
-+                        "Execute not implemented".to_string()
-+                    ))
-+                })
-+            }
-+
-+            fn cleanup(&mut self) -> $crate::component::ComponentResult<()> {
-+                Ok(())
-+            }
-+        }
-+    };
-+}
-+
-+/// Lifecycle management for components
-+pub struct ComponentLifecycle;
-+
-+impl ComponentLifecycle {
-+    pub async fn run<C: ComponentTrait>(
-+        component: &mut C,
-+        input: serde_json::Value,
-+        context: ComponentContext,
-+    ) -> ComponentResult<serde_json::Value> {
-+        component.init()?;
-+        let result = component.execute(input, context).await;
-+        component.cleanup()?;
-+        result
-+    }
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+
++  @doc false
++  defmacro __before_compile__(_env) do
++    quote do
++      @impl true
++      def run(input, context) do
++        call_rust(input, context)
++      end
++      
++      @doc """
++      Calls the Rust NIF with the given input and context.
++      """
++      def call_rust(input, context) do
++        case :erlang.function_exported(@rust_module, :nif_run, 2) do
++          true -> apply(@rust_module, :nif_run, [input, context])
++          false -> {:error, :nif_not_loaded}
++        end
++      end
++      
++      @doc """
++      Compiles the Rust source code for this beam.
++      """
++      def compile do
++        Rust.compile_component(@rust_name)
++      end
++      
++      @doc """
++      Loads the compiled NIF.
++      """
++      def load_nif do
++        Rust.load_nif(@rust_name)
++      end
++    end
++  end
++end
+---
