@@ -5,29 +5,25 @@ mod prism;
 mod beam;
 mod lifecycle;
 mod runtime;
-mod utils;
+mod error;
 
-use prism::prism_module;
-use beam::beam_module;
-use runtime::runtime_module;
+use component::LuxComponent;
+use prism::PrismComponent;
+use beam::BeamComponent;
 
-fn load(env: Env, _info: Term) -> bool {
-    runtime::init_runtime();
-    env.send_and_clear(&env.pid(), |env| {
-        let _ = env;
-    });
+fn load(env: Env, _term: Term) -> bool {
+    rustler::resource!(LuxComponent, env);
+    rustler::resource!(PrismComponent, env);
+    rustler::resource!(BeamComponent, env);
     true
 }
 
 rustler::init!(
     "lux_rust",
     [
-        prism_module::run_prism,
-        prism_module::validate_prism,
-        beam_module::run_beam,
-        beam_module::validate_beam,
-        runtime_module::spawn_async,
-        runtime_module::await_task,
+        prism::define_prism,
+        beam::define_beam,
+        component::run_component,
     ],
     load = load
 );
