@@ -1,25 +1,21 @@
-//! # Lux Framework - Rust Component Support
-//!
-//! This module provides the core functionality for defining and managing
-//! Lux components (Prisms and Beams) in Rust with full framework integration.
-//!
-//! ## Features
-//! - Rust component definition system
-//! - Trait system integration for components
-//! - Async/await support for component execution
-//! - Performance optimized component execution
-//! - Component lifecycle management
+pub mod components;
 
-/// Core Lux component types
-pub mod component {
-    pub use crate::component::LuxComponent;
-    pub use crate::component::Prism;
-    pub use crate::component::Beam;
-    pub use crate::component::Component;
+/// Main library entry point for Lux Rust components
+pub use components::{Prism, Beam, ComponentLifecycle};
+
+/// Re-export important types for component definition
+pub use components::prism::{PrismComponent, ComponentMetadata, BasePrism};
+pub use components::beam::{BaseBeam, AsyncComponent};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use components::prism::BasePrism;
+    
+    #[test]
+    fn test_prism_creation() {
+        let prism = BasePrism::new("test_prism", "1.0.0");
+        assert_eq!(prism.name, "test_prism");
+        assert_eq!(prism.version, "1.0.0");
+    }
 }
-
-pub mod component;
-pub mod async_runtime;
-
-/// Example usage:
-/// 
