@@ -1,10 +1,9 @@
 defmodule Lux.LLM.OpenRouter do
   @moduledoc """
-  OpenRouter API client providing unified access to multiple LLM models.
+  OpenRouter API integration for Lux.
 
-  OpenRouter (https://openrouter.ai) provides a unified API for accessing
-  various LLM models from different providers including OpenAI, Anthropic,
-  Google, and many others through a single endpoint.
+  Provides access to a wide range of LLM models through a single unified API.
+  Supports multiple models, rate limiting, cost tracking, and error handling with retries.
 
   ## Configuration
 
