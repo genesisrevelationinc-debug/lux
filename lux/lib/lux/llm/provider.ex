@@ -1,140 +1,111 @@
 defmodule Lux.LLM.Provider do
   @moduledoc """
   Universal provider interface for managing multiple LLM providers.
-  
-  This module defines the behaviour and common interface for all LLM providers,
-  enabling automatic model selection, fallback handling, and optimization features.
-  """
-  
-  alias Lux.LLM.ProviderRegistry
-  
-  @type model :: String.t()
-  @type prompt :: String.t() | list()
-  @type options :: keyword()
-  @type response :: {:ok, map()} | {:error, term()}
-  @type provider_config :: %{
-    required(:provider) => module(),
-    required(:model) => model(),
-    optional(:api_key) => String.t(),
-    optional(:base_url) => String.t(),
-    optional(:timeout) => non_neg_integer(),
-    optional(:retries) => non_neg_integer(),
-    optional(:any) => any()
-  }
-  
-  @callback init(config :: map()) :: {:ok, term()} | {:error, term()}
-  @callback complete(prompt :: prompt(), options :: options()) :: response()
-  @callback chat(messages :: list(), options :: options()) :: response()
-  @callback stream(prompt :: prompt(), options :: options()) :: Enumerable.t() | response()
-  @callback count_tokens(text :: String.t(), model :: model()) :: non_neg_integer()
-  @callback available_models() :: list(model())
-  @callback estimate_cost(tokens :: non_neg_integer(), model :: model()) :: float()
-  
+  Defines the contract that all LLM providers must implement.
+ certified """
+
+  alias Lux.LLM.Provider.Model
+
+  @type provider_id :: atom()
+  @type model_id :: String.t()
+  @type request :: %{
+          optional(:model) => model_id(),
+          optional(:messages) => list(),
+          optional(:temperature) => float(),
+          optional(:max_tokens) => integer(),
+          optional(:stream) => boolean(),
+          optional(:tools) => list(),
+          optional(:tool_choice) => any(),
+          optional(:response_format) => map(),
+          optional(:extra) => map()
+        }
+  @type response :: %{
+          id: String.t(),
+          model: model_id(),
+          provider: provider_id(),
+          content: String.t() | nil,
+          tool_calls: list() | nil,
+          usage: %{
+            prompt_tokens: integer(),
+            completion_tokens: integer(),
+            total_tokens: integer()
+          },
+          finish_reason: String.t(),
+          created_at: DateTime.t(),
+          raw: map()
+        }
+  @type error :: %{
+          type: atom(),
+          message: String.t(),
+          code: String.t() | nil,
+          details: map() | nil
+        }
+  @type stream_chunk :: %{
+          id: String.t(),
+          content: String.t() | nil,
+          tool_calls: list() | nil,
+          finish_reason: String.t() | nil,
+          usage: map() | nil
+        }
+
+  @callback init(opts :: keyword()) :: {:ok, map()} | {:error, term()}
+  @callback chat(request(), config :: map()) :: {:ok, response()} | {:error, error()}
+  @callback complete(request(), config :: map()) :: {:ok, response()} | {:error, error()}
+  @callback stream(request(), config :: map()) :: Enumerable.t() | {:error, error()}
+  @callback embed(text :: String.t() | list(), config :: map()) :: {:ok, list()} | {:error, error()}
+  @callback list_models(config :: map()) :: {:ok, list(Model.t())} | {:error, error()}
+  @callback get_model(model_id(), config :: map()) :: {:ok, Model.t()} | {:error, error()}
+  @callback validate_config(config :: map()) :: :ok | {:error, String.t()}
+
+  @optional_callbacks [stream: 2, embed: 2]
+
   @doc """
-  Gets the default provider configuration.
+  Makes a chat completion request to the specified provider.
   """
-  def default_config do
-    Application.get_env(:lux, :llm_default_provider, %{
-      provider: Lux.LLM.Providers.OpenAI,
- from_env(:lux, :llm_default_provider, %{
-      provider: Lux.LLM.Providers.OpenAI,
-      model: "gpt-4"
-    })
-  end
-  
-  @doc """
-  Sends a completion request using the specified or default provider.
-  """
-  def complete(prompt, options \\ []) do
-    provider = get_provider(options)
-    provider.complete(prompt, options)
-  end
-  
-  @doc """
-  Sends a chat completion request using the specified or default provider.
-  """
-  def chat(messages, options \\ []) do
-    provider = get_provider(options)
-    provider.chat(messages, options)
-  end
-  
-  @doc """
-  Streams a completion using the specified or default provider.
-  """
-  def stream(prompt, options \\ []) do
-    provider = get_provider(options)
-    provider.stream(prompt, options)
-  end
-  
-  @doc """
-  Counts tokens for the given text and model.
-  """
-  def count_tokens(text, model \\ nil, options \\ []) do
-    provider = get_provider(options)
-    model = model || provider.config[:model]
-    provider.count_tokens(text, model)
-  end
-  
-  @doc """
-  Gets available models from all registered providers or a specific provider.
-  """
-  def available_models(provider \\ nil) do
-    if provider do
-      provider.available_models()
-    else
-      ProviderRegistry.all_providers()
-      |> Enum.flat_map(fn {_, mod} -> mod.available_models() end)
-      |> Enum.uniq()
+  def chat(provider_module, request, config) do
+    with :ok <- validate_request(request),
+         :ok <- provider_module.validate_config(config) do
+      provider_module.chat(request, config)
     end
   end
-  
+
   @doc """
-  Estimates the cost for a given number of tokens and model.
+  Streams a chat completion response.
   """
-  def estimate_cost(tokens, model, options \\ []) do
-    provider = get_provider(options)
-    provider.estimate_cost(tokens, model)
-  end
-  
-  @doc """
-  Selects the best provider based on criteria (cost, speed, quality).
-  """
-  def select_provider(criteria \\ :balanced) do
-    ProviderRegistry.select_provider(criteria)
-  end
-  
-  @doc """
-  Executes a request with fallback handling across multiple providers.
-  """
-  def with_fallback(request_fn, providers \\ nil) do
-    providers = providers || ProviderRegistry.all_providers()
-    
-    Enum.reduce candidate in providers do
-      try do
-        case request_fn.(candidate) do
-          {:ok, result} -> {:ok, result}
-          {:error, _} = error -> throw {:fallback, error}
-        end
-      catch
-        {:fallback, error} -> error
-        _ -> 
-          if candidate == List.last(providers) do
-            {:error, :all_providers_failed}
-          else
-            {:fallback, error}
-          end
-      end
+  def stream(provider_module, request, config) do
+    with :ok <- validate_request(request),
+         :ok <- provider_module.validate_config(config) do
+      provider_module.stream(request, config)
     end
   end
-  
-  defp get_provider(options) do
-    case Keyword.get(options, :provider) do
-      nil -> 
-        case ProviderRegistry.get_default() do
-          nil -> raise "No default provider configured"
-          provider -> provider
-        end
-      provider -> provider
+
+  @doc """
+  Validates a request structure.
+  """
+  def validate_request(request) when is_map(request) do
+    cond do
+      not Map.has_key?(request, :messages) and not Map.has_key?(request, "messages") ->
+        {:error, %{type: :validation_error, message: "Request must contain :messages", code: nil, details: nil}}
+
+      true ->
+        :ok
     end
+  end
+
+  def validate_request(_), do: {:error, %{type: :validation_error, message: "Request must be a map", code: nil, details: nil}}
+
+  @doc """
+  Builds a standard response from provider-specific data.
+  """
+  def build_response(attrs) do
+    Map.merge(%{
+      id: nil,
+      content: nil,
+      tool_calls: nil,
+      usage: %{prompt_tokens: 0, completion_tokens: 0, total_tokens: 0},
+      finish_reason: nil,
+      created_at: DateTime.utc_now(),
+      raw: %{}
+    }, attrs)
   end
 end
