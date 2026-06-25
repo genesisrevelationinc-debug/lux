@@ -4,12 +4,13 @@ defmodule Lux.MixProject do
   def project do
     [
       app: :lux,
-      version: "0.5.0",
-      elixir: "~> 1.18",
-      start_permanent: Mix.env() == :prod,
-      deps: deps(),
-      dialyzer: [
-        plt_add_apps: [:mix],
+      version: "0.1.0",
+      elixir: "~> 1.15",
+      elixir: "~> 1.15",
+      compilers: [:rustler] ++ Mix.compilers(),
+      deps: deps()
+    ]
+  end
         plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
         plt_core_path: "priv/plts/"
       ],
@@ -18,13 +19,13 @@ defmodule Lux.MixProject do
       # Test coverage
       test_coverage: [tool: ExCoveralls],
       preferred_cli_env: [
-        coveralls: :test,
-        "coveralls.detail": :test,
-        "coveralls.post": :test,
-        "coveralls.html": :test,
-        "coveralls.github": :test
-      ],
-      # Package
+  # Run "mix help deps" to learn about dependencies.
+  defp deps do
+    [
+      {:rustler, "~> 0.30.0", runtime: false}
+      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+    ]
+  end
       description:
         "A framework for building and orchestrating LLM-powered agent workflows in Elixir",
       package: package(),
@@ -42,52 +43,45 @@ defmodule Lux.MixProject do
       mod: {Lux.Application, []},
       extra_applications: extra_applications(Mix.env())
     ]
-      {:req, "~> 0.5"},
-      {:nimble_options, "~> 1.1"},
-      {:ex_doc, "~> 0.31", only: :dev, runtime: false},
-      {:mox, "~> 1.0", only: :test},
-      {:rustler, "~> 0.34.0", runtime: false},
-      {:rustler_precompiled, "~> 0.7"}
-    ]
   end
 
+  defp extra_applications(:dev), do: [:logger, :crypto, :wx, :observer, :runtime_tools]
+  defp extra_applications(_), do: [:logger, :crypto]
+
+  defp elixirc_paths(:test), do: ["lib", "test/"]
+  defp elixirc_paths(_), do: ["lib"]
 
   defp aliases do
     [
       "test.unit": "test --include unit",
-        "README.md",
-        "lux/guides/getting_started.md",
-        "lux/guides/core_concepts.md",
-        "lux/guides/language_support.md",
-        "lux/guides/rust_integration.md"
-      ],
-      groups_for_extras: [
-        "Getting Started": [
+      "test.integration": "test --include integration",
+      coveralls: "coveralls",
+      "coveralls.detail": "coveralls.detail",
+      "coveralls.post": "coveralls.post",
+      "coveralls.html": "coveralls.html",
+      "coveralls.github": "coveralls.github"
+    ]
   end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
-          "lux/guides/agents.livemd",
-          "lux/guides/signals.livemd",
-          "lux/guides/prisms.livemd"
-        ],
-        "Language Integration": [
-          "lux/guides/rust_integration.md"
-        ]
-      ],
-      groups_for_modules: [
+    [
+      {:bandit, "~> 1.0"},
+      {:req, "~> 0.5.0"},
+      {:venomous, "~> 0.7.5"},
+      {:crontab, "~> 1.1"},
+      {:ex_json_schema, "~> 0.10.2"},
       {:nodejs, "~> 3.1"},
       {:ethers, "~> 0.6.4"},
       {:ex_secp256k1, "~> 0.7.4"},
       {:yaml_elixir, "~> 2.9"},
-          Lux.Beam,
-          Lux.Lens,
-          Lux.Signal,
-          Lux.Signal.Router,
-          Lux.Rust
-        ],
-        "Schema & Validation": [
-          Lux.Schema
+      {:hammer, "~> 7.0", only: [:test]},
+      # test and dev dependencies
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4.5", only: :dev, runtime: false},
+      {:dotenvy, "~> 1.1.0", only: [:dev, :test]},
+      {:mock, "~> 0.3.0", only: [:test]},
       {:stream_data, "~> 1.0", only: [:test]},
       {:styler, "~> 1.3", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test}
