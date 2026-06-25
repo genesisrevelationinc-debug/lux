@@ -1,171 +1,170 @@
- Looking at this issue, I need to implement an NFT marketplace data aggregation system for the Lux framework. Let me analyze the repository structure and create the necessary files.
-
-From the root listing, I can see this is an Elixir project with `lux` and `lux_app` directories. The issue requires:
-1. Collection data aggregation
-2. Price tracking system
-3. Sales monitoring implementation
-4. Rarity scoring engine
-5. Market trend analysis
-6. Documentation and examples
-7. Integration tests for data collection
-8. Cross-marketplace functionality
-
-Let me create the necessary files for this NFT marketplace data aggregation system.
-
-```diff
+ ```diff
 --- /dev/null
 +++ b/lux/lib/lux/nft_marketplace.ex
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,18 @@
 +defmodule Lux.NFTMarketplace do
 +  @moduledoc """
 +  NFT Marketplace Data Aggregation System for Lux.
 +
-+  Provides unified access to NFT marketplace data across multiple platforms
-+  including OpenSea, Blur, and X2Y2.
-+
-+  ## Features
-+  - Collection statistics aggregation
-+  - Price tracking across marketplaces
-+  - Sales monitoring and history
-+  - Rarity calculation and trait analysis
-+  - Market trend analysis
-+  - Cross-marketplace comparison
-+
-+  ## Examples
-+
-+      # Get collection statistics
-+      Lux.NFTMarketplace.get_collection_stats("0x...contract_address...")
-+
-+      # Track prices across marketplaces
-+      Lux.NFTMarketplace.track_prices("0x...contract_address...", token_id: 123)
-+
-+      # Monitor sales
-+      Lux.NFTMarketplace.get_recent_sales("0x...contract_address...", limit: 50)
-+
-+      # Calculate rarity
-+      Lux.NFTMarketplace.calculate_rarity("0x...contract_address...", token_id: 123)
-+
++  Provides unified access to collection statistics, price tracking,
++  sales monitoring, rarity calculation, trait analysis, market trends,
++  listing management, and cross-marketplace comparison.
 +  """
 +
-+  alias Lux.NFTMarketplace.{
-+    Collection,
-+    PriceTracker,
-+    SalesMonitor,
-+    RarityEngine,
-+    MarketTrends,
-+    CrossMarketplace
-+  }
++  alias Lux.NFTMarketplace.Aggregator
++  alias Lux.NFTMarketplace.Collection
++  alias Lux.NFTMarketplace.Listing
++  alias Lux.NFTMarketplace.MarketTrends
++  alias Lux.NFTMarketplace.PriceTracker
++  alias Lux.NFTMarketplace.Rarity
++  alias Lux.NFTMarketplace.SalesMonitor
++  alias Lux.NFTMarketplace.TraitAnalysis
++end
+--- /dev/null
++++	/lux/lib/lux/nft_marketplace/aggregator.ex
+@@ -0,0 +1,148 @@
++defmodule Lux.NFTMarketplace.Aggregator do
++  @moduledoc """
++  Cross-marketplace data aggregation supporting OpenSea, Blur, and X2Y2.
++  """
 +
-+  @type contract_address :: String.t()
-+  @type token_id :: non_neg_integer() | String.t()
-+  @type marketplace :: :opensea | :blur | :x2y2 | :all
-+  @type opts :: keyword()
++  alias Lux.NFTMarketplace.Collection
++  alias Lux.NFTMarketplace.Listing
++  alias Lux.NFTMarketplace.PriceTracker
 +
-+  # Collection Statistics
++  @type marketplace :: :opensea | :blur | :x2y2
++  @type collection_data :: %{
++          slug: String.t(),
++          name: String.t(),
++          floor_price: float(),
++          total_volume: float(),
++          num_owners: integer(),
++          total_supply: integer(),
++          marketplace: marketplace()
++        }
 +
 +  @doc """
-+  Retrieves aggregated statistics for an NFT collection.
-+
-+  ## Options
-+    - `:marketplace` - Specific marketplace to query (:opensea, :blur, :x2y2, :all). Defaults to :all.
-+    - `:refresh` - Force refresh cached data. Defaults to false.
-+
-+  ## Examples
-+
-+      iex> Lux.NFTMarketplace.get_collection_stats("0xBC4CA0E...b7a")
-+      {:ok, %Lux.NFTMarketplace.Collection.Stats{}}
-+
++  Fetches collection data from all supported marketplaces and aggregates it.
 +  """
-+  @spec get_collection_stats(contract_address(), opts()) ::
-+          {:ok, Collection.Stats.t()} | {:error, term()}
-+  def get_collection_stats(contract_address, opts \\ []) do
-+    Collection.get_stats(contract_address, opts)
++  @spec aggregate_collection(String.t()) :: {:ok, map()} | {:error, term()}
++  def aggregate_collection(slug) do
++    marketplaces = [:opensea, :blur, :x2y2]
++
++    results =
++      marketplaces
++      |> Task.async_stream(fn marketplace ->
++        fetch_collection_data(marketplace, slug)
++      end, timeout: 30_000, on_timeout: :kill_task)
++      |> Enum.reduce(%{}, fn
++        {:ok, {:ok, data}}, acc ->
++          Map.put(acc, data.marketplace, data)
++
++        _, acc ->
++          acc
++      end)
++
++    if map_size(results) == 0 do
++      {:error, :no_data_available}
++    else
++      aggregated = %{
++        slug: slug,
++        aggregated: calculate_aggregated_stats(results),
++        marketplaces: results,
++        best_floor: find_best_floor(results),
++        price_discrepancy: calculate_price_discrepancy(results),
++        timestamp: DateTime.utc_now()
++      }
++
++      {:ok, aggregated}
++    end
 +  end
 +
 +  @doc """
-+  Retrieves detailed collection information including traits and metadata.
++  Compares prices across marketplaces for a given collection.
 +  """
-+  @spec get_collection_info(contract_address(), opts() | map()) ::
-+          {:ok, Collection.t()} | {:error, term()}
-+  def get_collection_info(contract_address, opts \\ []) do
-+    Collection.get_info(contract_address, opts)
++  @spec compare_prices(String.t()) :: {:ok, map()} | {:error, term()}
++  def compare_prices(slug) do
++    case aggregate_collection(slug) do
++      {:ok, data} ->
++        comparison = %{
++          slug: slug,
++          prices: extract_prices(data.marketplaces),
++          savings_opportunities: find_savings(data.marketplaces),
++          recommended_marketplace: recommend_marketplace(data.marketplaces),
++          timestamp: DateTime.utc_now()
++        }
++
++        {:ok, comparison}
++
++      error ->
++        error
++    end
 +  end
 +
-+  # Price Tracking
++  # Private functions
 +
-+  @doc """
-+  Tracks current and historical prices for a specific NFT or collection.
-+
-+  ## Options
-+    - `:token_id` - Specific token to track. If omitted, tracks floor price.
-+    - `:timeframe` - Price history timeframe (:1h, :24h, :7d, :30d, :all). Defaults to :24h.
-+    - `:marketplace` - Specific marketplace to query.
-+
-+  """
-+  @spec track_prices(contract_address(), opts()) ::
-+          {:ok, PriceTracker.PriceData.t()} | {:error, term()}
-+  def track_prices(contract_address, opts \\ []) do
-+    PriceTracker.get_prices(contract_address, opts)
++  defp fetch_collection_data(:opensea, slug) do
++    Lux.NFTMarketplace.Clients.OpenSea.get_collection(slug)
 +  end
 +
-+  # Sales Monitoring
-+
-+  @doc """
-+  Retrieves recent sales data for a collection or specific NFT.
-+
-+  ## Options
-+    - `:token_id` - Filter by specific token.
-+    - `:limit` - Number of sales to retrieve. Defaults to 20.
-+    - `:marketplace` - Filter by marketplace.
-+    - `:from` - Start timestamp for sales query.
-+    - `:to` - End timestamp for sales query.
-+
-+  """
-+  @spec get_recent_sales(contract_address(), opts()) ::
-+          {:ok, [SalesMonitor.Sale.t()]} | {:error, term()}
-+  def get_recent_sales(contract_address, opts \\ []) do
-+    SalesMonitor.get_sales(contract_address, opts)
++  defp fetch_collection_data(:blur, slug) do
++    Lux.NFTMarketplace.Clients.Blur.get_collection(slug)
 +  end
 +
-+  # Rarity Calculation
-+
-+  @doc """
-+  Calculates rarity score for a specific NFT within its collection.
-+
-+  ## Options
-+    - `:method` - Rarity calculation method (:statistical, :trait_count, :jaccard). Defaults to :statistical.
-+
-+  """
-+  @spec calculate_rarity(contract_address(), token_id(), opts()) ::
-+          {:ok, RarityEngine.RarityScore.t()} | {:error, term()}
-+  def calculate_rarity(contract_address, token_id, opts \\ []) do
-+    RarityEngine.calculate(contract_address, token_id, opts)
++  defp fetch_collection_data(:x2y2, slug) do
++    Lux.NFTMarketplace.Clients.X2Y2.get_collection(slug)
 +  end
 +
-+  @doc """
-+  Analyzes trait distribution and rarity within a collection.
-+  """
-+  @spec analyze_traits(contract_address(), opts()) ::
-+          {:ok, RarityEngine.TraitAnalysis.t()} | {:error, term()}
-+  def analyze_traits(contract_address, opts \\ []) do
-+    RarityEngine.analyze_traits(contract_address, opts)
++  defp calculate_aggregated_stats(results) do
++    floors = for {_, data} <- results, data.floor_price > 0, do: data.floor_price
++    volumes = for {_, data} <- results, data.total_volume > 0, do: data.total_volume
++
++    %{
++      average_floor: if(length(floors) > 0, do: Enum.sum(floors) / length(floors), else: 0),
++      total_volume_across_marketplaces: Enum.sum(volumes),
++      marketplace_count: map_size(results)
++    }
 +  end
 +
-+  # Market Trends
-+
-+  @doc """
-+  Analyzes market trends for a collection or across the NFT market.
-+
-+  ## Options
-+    - `:timeframe` - Analysis timeframe (:24h, :7d, :30d, :90d). Defaults to :7d.
-+    - `:metric` - Specific metric to analyze (:volume, :floor_price, :sales_count, :liquidity).
-+
-+  """
-+  @spec analyze_market_trends(contract_address() | nil(), opts()) ::
-+          {:ok, MarketTrends.TrendAnalysis.t()} | {:error, term()}
-+  def analyze_market_trends(contract_address \\ nil, opts \\ []) do
-+    MarketTrends.analyze(contract_address, opts)
++  defp find_best_floor(results) do
++    results
++    |> Enum.filter(fn {_, data} -> data.floor_price > 0 end)
++    |> Enum.min_by(fn {_, data} -> data.floor_price end, fn -> nil end)
 +  end
 +
-+  # Cross-Markplace Comparison
++  defp calculate_price_discrepancy(results) do
++    floors = for {_, data} <- results, data.floor_price > 0, do: data.floor_price
 +
++    if length(floors) > 1 do
++      max = Enum.max(floors)
++      min = Enum.min(floors)
++      (max - min) / minikon
++    else
++      0.0
++    end
++  end
++
++  defp extract_prices(marketplaces) do
++    for {name, data} <- marketplaces, do: %{marketplace: name, floor_price: data.floor_price}
++  end
++
++  defp find_savings(marketplaces) do
++    floors = for {name, data} <- marketplaces, data.floor_price > 0, do: {name, data.floor_price}
++    {cheapest, _} = Enum.min_by(floors, fn {_, price} -> price end)
++    {most_expensive, _} = Enum.max_by(floors, fn {_, price} -> price end)
++
++    if cheapest != most_expensive do
++      [%{buy_at: cheapest, avoid: most_expensive}]
++    else
++      []
++    end
++  end
++
++  defp recommend_marketplace(marketplaces) do
++    floors = for {name, data} <- marketplaces, data.floor_price > 0, do: {name, data.floor_price}
++    {name, _} = Enum.min_by(floors, fn {_, price} -> price end)
++    name
++  end
++end
+--- /dev/null
++++
