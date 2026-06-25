@@ -1,52 +1,52 @@
 defmodule Lux.LLM.ProviderConfig do
   @moduledoc """
-  Configuration struct for LLM providers.
+  Configuration structure for LLM providers.
   """
-
-  @type t :: %__MODULE__{
-      provider: atom(),
-      api_key: String.t() | nil,
-      base_url: String.t() | nil,
-      organization_id: String.t() | nil,
-      default_model: String.t() | nil,
-      timeout: integer(),
-      max_retries: integer(),
-      retry_delay: integer(),
-      extra_headers: [{String.t(), String.t()}],
-      metadata: map()
-    }
 
   defstruct [
-    :provider,
+    :name,
+    :module,
     :api_key,
     :base_url,
-    :organization_id,
     :default_model,
-    timeout: 30_000,
-    max_retries: 3,
-    retry_delay: 1000,
-    extra_headers: [],
-    metadata: %{}
+    :models,
+    :rate_limit,
+    :timeout,
+    :retry_policy,
+    :cost_per_token,
+    :metadata
   ]
 
+  @type t :: %__MODULE__{
+          name: atom(),
+          module: module(),
+          api_key: String.t() | nil,
+          base_url: String.t() | nil,
+          default_model: String.t() | nil,
+          models: [String.t()],
+          rate_limit: pos_integer() | nil,
+          timeout: pos_integer(),
+          retry_policy: keyword(),
+          cost_per_token: map() | nil,
+          metadata: map()
+        }
+
   @doc """
-  Create a new provider configuration.
+  Creates a new provider configuration.
   """
-  def new(attrs \\ %{}) do
-    struct!(__MODULE__, attrs)
+  def new(attrs) do
+    struct!(__MODULE__, Map.merge(defaults(), attrs))
   end
 
   @doc """
-  Merge additional attributes into an existing config.
+  Default configuration values.
   """
-  def merge(%__MODULE__{} = config, attrs) when is_map(attrs) do
-    struct!(config, attrs)
-  end
-
-  @doc """
-  Get a value from the config's metadata.
-  """
-  def get_metadata(%__MODULE__{metadata: metadata}, key, default \\ nil) do
-    Map.get(metadata, key, default)
+  def defaults do
+    %{
+      models: [],
+      timeout: 30_000,
+      retry_policy: [max_retries: 3, backoff: :exponential],
+      metadata: %{}
+    }
   end
 end
