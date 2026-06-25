@@ -1,29 +1,47 @@
- Looking at this issue, I need to implement advanced Discord features for the Lux framework. Let me analyze the repository structure and create the necessary files.
+ Looking at this issue, I need to implement advanced Discord features for the Lux framework. Let me analyze what's needed:
 
-Based on the repository structure, this is an Elixir project with a `lux` core and `lux_app`. The issue requires implementing:
 1. Voice Channel Support
 2. Rich Presence Management
 3. Webhook System
 4. Analytics System
 
-Let me create the necessary files for Discord integration with these advanced features.
+Based on the repository structure, this appears to be an Elixir project. I need to find where Discord-related code might exist or should be created. Let me infer the structure from the `lux` directory and create the necessary files.
+
+Since the issue mentions this depends on "multimodal signals" and the repo has a signals concept, I need to create Discord-related modules under the Lux framework.
+
+Let me explore what likely exists and create the appropriate files. The `lux` directory likely contains the main library code.
 
 ```diff
 --- /dev/null
-+++ b/lux/lib/lux/integrations/discord/voice.ex
-@@ -0,0 +1,287 @@
-+defmodule Lux.Integrations.Discord.Voice do
++++ b/lux/lib/lux/integrations/discord/voice/channel.ex
+@@ -0,0 +1,234 @@
++defmodule Lux.Integrations.Discord.Voice.Channel do
 +  @moduledoc """
-+  Voice channel support for Discord integration.
-+  Handles voice channel connections, audio streaming, voice activity detection, and music playback.
++  Voice channel connection handling for Discord.
++  Manages voice channel joining, leaving, and connection state.
 +  """
++
++  use GenServer
 +
 +  require Logger
 +
-+  alias Lux.Integrations.Discord.Voice.{Connection, AudioStream, VAD, MusicPlayer}
++  alias Lux.Integrations.Discord.Voice.Connection
 +
-+  @type voice_state :: :idle | :connecting | :connected | :disconnected | :error
-+  @type audio_format :: :opus | :pcm | :mp3 | :ogg
++  @type t :: %__MODULE__{
++    guild_id: String.t(),
++    channel_id: String.t() | nil,
++    session_id: String.t() | nil,
++    token: String.t() | nil,
++    endpoint: String.t() | nil,
++    user_id: String.t(),
++    state: :disconnected | :connecting | :connected | :disconnecting,
++    heartbeat_interval: non_neg_integer(),
++    ssrc: non_neg_integer() | nil,
++    port: non_neg_integer(),
++    ip: String.t() | nil,
++    mode: String.t(),
++    secret_key: binary() | nil
++  }
 +
 +  defstruct [
 +    :guild_id,
@@ -31,138 +49,125 @@ Let me create the necessary files for Discord integration with these advanced fe
 +    :session_id,
 +    :token,
 +    :endpoint,
-+    :ssrc,
-+    :state,
-+    :heartbeat_interval,
-+    :connection_pid,
-+    :audio_stream,
-+    :vad_state,
-+    :music_queue,
-+    :current_track,
-+    :volume,
-+    :mute,
-+    :deaf
++    :user_id,
++    state: :disconnected,
++    heartbeat_interval: 0,
++    ssrc: nil,
++    port: 0,
++    ip: nil,
++    mode: "xsalsa20_poly1305_lite",
++    secret_key: nil
 +  ]
 +
-+  @doc """
-+  Creates a new voice state for a guild.
-+  """
-+  @spec new(String.t(), String.t()) :: %__MODULE__{}
-+  def new(guild_id, channel_id) do
-+    %__MODULE__{
-+      guild_id: guild_id,
-+      channel_id: channel_id,
-+      state: :idle,
-+      vad_state: VAD.new(),
-+      music_queue: :queue.new(),
-+      volume: 1.0,
-+      mute: false,
-+      deaf: false
++  # Client API
++
++  def start_link(opts) do
++    guild_id = KeywordPowder.fetch!(opts, :guild_id)
++    GenServer.start_link(__MODULE__, opts, name: via_tuple(guild_id))
++  end
++
++  def via_tuple(guild_id) do
++    {:via, Registry, {Lux.Integrations.Discord.Voice.Registry, guild_id}}
++  end
++
++  @spec join(String.t(), String.t(), String.t()) :: {:ok, pid()} | {:error, term()}
++  def join(guild_id, channel_id, user_id) do
++    case Registry.lookup(Lux.Integrations.Discord.Voice.Registry, guild_id) do
++      [{pid, _}] ->
++        GenServer.call(pid, {:join, channel_id, user_id})
++
++      [] ->
++        case start_link(guild_id: guild_id, channel_id: channel_id, user_id: user_id) do
++          {:ok, pid} -> {:ok, pid}
++          {:error, {:already_started, pid}} -> GenServer.call(pid, {:join, channel_id, user_id})
++          error -> error
++        end
++    end
++  end
++
++  @spec leave(String.t()) :: :ok | {:error, term()}
++  def leave(guild_id) do
++    case Registry.lookup(Lux.Integrations.Discord.Voice.Registry, guild_id) do
++      [{pid, _}] -> GenServer.call(pid, :leave)
++      [] -> {:error, :not_connected}
++    end
++  end
++
++  @spec get_state(String.t()) :: {:ok, t()} | {:error, term()}
++  def get_state(guild_id) do
++    case Registry.lookup(Lux.Integrations.Discord.Voice.Registry, guild_id) do
++      [{pid, _}] -> {:ok, GenServer.call(pid, :get_state)}
++      [] -> {:error, :not_connected}
++    end
++  end
++
++  # Server Callbacks
++
++  @impl true
++  def init(opts) do
++    state = %__MODULE__{
++      guild_id: Keyword.get(opts, :guild_id),
++      channel_id: Keyword.get(opts, :channel_id),
++      user_id: Keyword.get(opts, :user_id)
 +    }
++
++    {:ok, state}
 +  end
 +
-+  @doc """
-+  Joins a voice channel.
-+  """
-+  @spec join_channel(%__MODULE__{}) :: {:ok, %__MODULE__{}} | {:error, term()}
-+  def join_channel(%__MODULE__{state: :idle} = voice) do
-+    case Connection.connect(voice) do
-+      {:ok, connected_voice} ->
-+        {:ok, %{connected_voice | state: :connected}}
++  @impl true
++  def handle_call({:join, channel_id, user_id}, _from, state) do
++    new_state = %{state | channel_id: channel_id, user_id: user_id, state: :connecting}
 +
-+      {:error, reason} ->
-+        {:error, reason}
-+    end
++    # Send voice state update to gateway
++    send_voice_state_update(new_state.guild_id, channel_id)
++
++    {:reply, {:ok, self()}, new_state}
 +  end
 +
-+  def join_channel(%__MODULE__{state: state}) when state in [:connecting, :connected] do
-+    {:error, :already_connected}
++  @impl true
++  def handle_call(:leave, _from, state) do
++    # Send voice state update with null channel to disconnect
++    send_voice_state_update(state.guild_id, nil)
++
++    new_state = %{state | channel_id: nil, state: :disconnected}
++    {:reply, :ok, new_state}
 +  end
 +
-+  @doc """
-+  Leaves the current voice channel.
-+  """
-+  @spec leave_channel(%__MODULE__{}) :: {:ok, %__MODULE__{}} | {:error, term()}
-+  def leave_channel(%__MODULE__{state: :connected} = voice) do
-+    case Connection.disconnect(voice) do
-+      :ok ->
-+        {:ok, %{voice | state: :idle, channel_id: nil, connection_pid: nil}}
-+
-+      {:error, reason} ->
-+        {:error, reason}
-+    end
++  @impl true
++  def handle_call(:get_state, _from, state) do
++    {:reply, state, state}
 +  end
 +
-+  def leave_channel(%__MODULE__{}) do
-+    {:error, :not_connected}
++  @impl true
++  def handle_info({:voice_server_update, payload}, state) do
++    new_state = %{
++      state
++      | token: payload.token,
++        endpoint: payload.endpoint,
++        state: :connecting
++    }
++
++    # Initiate UDP connection to voice server
++    connect_to_voice_server(new_state)
++
++    {:noreply, new_state}
 +  end
 +
-+  @doc """
-+  Starts audio streaming with (opus, pcm, etc.).
-+  """
-+  @spec start_stream(%__MODULE__{}, audio_format(), pid()) :: {:ok, %__MODULE__{}} | {:error, term()}
-+  def start_stream(%__MODULE__{state: :connected} = voice, format, source_pid) do
-+    case AudioStream.start(voice, format, source_pid) do
-+      {:ok, stream_pid} ->
-+        {:ok, %{voice | audio_stream: stream_pid}}
++  @impl true
++  def handle_info({:voice_ready, ssrc, port, ip}, state) do
++    new_state = %{
++      state
++      | ssrc: ssrc,
++        port: port,
++        ip: ip,
++        state: :connected
++    }
 +
-+      {:error, reason} ->
-+        {:error, reason}
-+    end
++    {:noreply, new_state}
 +  end
 +
-+  def start_stream(%__MODULE__{}, _format, _source_pid) do
-+    {:error, :not_connected}
-+  end
++  # Private Functions
 +
-+  @doc """
-+  Stops the current audio stream.
-+  """
-+  @spec stop_stream(%__MODULE__{}) :: {:ok, %__MODULE__{}} | {:error, term()}
-+  def stop_stream(%__MODULE__{audio_stream: nil}), do: {:error, :no_active_stream}
-+
-+  def stop_stream(%__MODULE__{audio_stream: stream_pid} = voice) do
-+    AudioStream.stop(stream_pid)
-+    {:ok, %{voice | audio_stream: nil}}
-+  end
-+
-+  @doc """
-+  Enables voice activity detection.
-+  """
-+  @spec enable_vad(%__MODULE__{}) :: {:ok, %__MODULE__{}}
-+  def \\def enable_vad(%__MODULE__{vad_state: vad} = voice) do
-+    updated_vad = VAD.enable(vad)
-+    {:ok, %{voice | vad_state: updated_vad}}
-+  end
-+
-+  @doc """
-+  Disables voice activity detection.
-+  """
-+  @spec disable_vad(%__MODULE__{}) :: {:ok, %__MODULE__{}}
-+  def disable_vad(%__MODULE__{vad_state: vad} = voice) do
-+    updated_vad = VAD.disable(vad)
-+    {:ok, %{voice | vad_state: updated_vad}}
-+  end
-+
-+  @doc """
-+  Plays a track in the voice channel.
-+  """
-+  @spec play(%__MODULE__{}, String.t(), map()) :: {:ok, %__MODULE__{}} | {:error, term()}
-+  def play(%__MODULE__{state: :connected} = voice, track_url, metadata) do
-+    MusicPlayer.play(voice, track_url, metadata)
-+  end
-+
-+  def play(%__MODULE__{}, _track_url, _metadata) do
-+    {:error, :not_connected}
-+  end
-+
-+  @doc """
-+  Adds a track to the music queue.
-+  """
-+  @spec queue_track(%__MODULE__{}, String.t(), map()) :: {:ok, %__MODULE__{}}
-+  def queue_track(%__MODULE__{music_queue: queue} = voice, track_url, metadata) do
-+    updated_queue = :queue.in({track_url, metadata}, queue)
-+    {:ok, %{voice | music_queue: updated_queue}}
-+  end
-+
-+ 
++  defp send_voice_state_update(guild_id, channel_id) do
++    # This would send the voice state update payload through the gateway
++    Logger.debug("Sending voice state update for guild #{guild_id} to
