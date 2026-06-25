@@ -4,171 +4,183 @@
 @@ -0,0 +1,316 @@
 +defmodule Lux.LLM do
 +  @moduledoc """
-+  API for interacting with LLM providers through the universal provider interface.
++  Universal LLM Provider Abstraction Layer for Lux.
 +
-+  This module provides a high-level API for:
-+  - Generating text completions
-+  - Selecting optimal providers and models
-+  - Handling fallbacks automatically
-+  - Tracking costs and performance
-+  - Caching responses
++  Provides a unified interface for interacting with multiple LLM providers,
++  with automatic model selection, smart fallback handling, cost tracking,
++  and performance monitoring.
 +
 +  ## Configuration
 +
 +  Configure providers in your application config:
 +
-+      config :lux, :llm,
++      config :lux, Lux.LLM,
 +        default_provider: :openai,
 +        providers: [
 +          openai: [
 +            module: Lux.LLM.Providers.OpenAI,
 +            api_key: System.get_env("OPENAI_API_KEY"),
-+            models: ["gpt-4", "gpt-3.5-turbo"],
 +            default_model: "gpt-4",
-+            priority: 1
++            models: ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"]
 +          ],
 +          anthropic: [
 +            module: Lux.LLM.Providers.Anthropic,
 +            api_key: System.get_env("ANTHROPIC_API_KEY"),
-+            models: ["claude-3-opus", "claude-3-sonnet"],
-+            default_model: "claude-3-opus",
-+            priority: 2
++            default_model: "claude-3-opus-20240229",
++            models: ["claude-3-opus-20240229", "claude-3-sonnet-20240229"]
 +          ]
 +        ],
-+        cache: [
-+          enabled: true,
-+          ttl: 300_000  # 5 minutes
-+        ],
-+        fallback: [
-+          enabled: true,
-+          max_retries: 3,
-+          retry_delay: 1000
-+        ]
++        fallback_chain: [:openai, :anthropic],
++        cache: true,
++        cost_tracking: true,
++        performance_monitoring: true
 +
-+  ## Basic Usage
++  ## Usage
 +
-+  Generate a simple completion:
++      # Simple call with default provider
++      {:ok, response} = Lux.LLM.call("What is the capital of France?")
 +
-+      iex> Lux.LLM.complete("What is the capital of France?")
-+      {:ok, "The capital of France is Paris."}
++      # Call with specific provider
++      {:ok, response} = Lux.LLM.call("What is the capital of France?", provider: :anthropic)
 +
-+  Use a specific provider:
++      # Call with specific model
++      {:ok, response} = Lux.LLM.call("What is the capital of France?", model: "gpt-4")
 +
-+      iex> Lux.LLM.complete("Hello", provider: :anthropic)
-+      {:ok, "Hello! How can I help you today?"}
++      # Call with streaming
++      {:ok, stream} = Lux.LLM.call("Tell me a story", stream: true)
 +
-+  Use a specific model:
-+
-+      iex> Lux.LLM.complete("Hello", model: "gpt-3.5-turbo")
-+      {:ok, "Hello! How can I help you today?"}
-+
-+  ## Advanced Usage
-+
-+  Streaming responses:
-+
-+      iex> Lux.LLM.complete("Tell me a story", stream: true, stream_to: self())
-+      {:ok, :streaming}
-+
-+  With structured output:
-+
-+      iex> Lux.LLM.complete("Extract the name", schema: %{name: :string})
-+      {:ok, %{name: "John Doe"}}
-+
-+  With monitoring:
-+
-+      iex> Lux.LLM.complete("Hello", track: true)
-+      {:ok, "Hello!", %Lux.LLM.Metrics{...}}
 +  """
 +
-+  alias Lux.LLM.{
-+    Provider,
-+    ProviderRegistry,
-+    ModelSelector,
-+    FallbackHandler,
-+    CostTracker,
-+    PerformanceMonitor,
-+    Cache
-+  }
++  alias Lux.LLM.{Provider, ProviderRegistry, ModelSelector, FallbackHandler, CostTracker, PerformanceMonitor}
 +
 +  require Logger
 +
-+  @type completion_opts :: [
-+    provider: atom(),
-+    model: String.t(),
-+    temperature: float(),
-+    max_tokens: integer(),
-+    top_p: float(),
-+    stream: boolean(),
-+    stream_to: pid() | atom(),
-+    schema: map(),
-+    track: boolean(),
-+    cache: boolean(),
-+    fallback: boolean(),
-+    timeout: integer()
-+  ]
++  @type provider_name :: atom()
++  @type model_name :: String.t()
++  @type prompt :: String.t() | list(map())
++  @type opts :: keyword()
++  @type response :: map()
++  @type error :: {:error, term()}
 +
-+  @type completion_result :: {:ok, String.t() | map()} | {:ok, String.t(), map()} | {:error, term()}
++  # ============================================================================
++  # Public API
++  # ============================================================================
 +
 +  @doc """
-+  Generates a text completion using the configured or specified provider.
++  Makes an LLM call with automatic provider selection and fallback handling.
 +
 +  ## Options
 +
-+  - `:provider` - Specific provider to use (e.g., `:openai`, `:anthropic`)
-+  - `:model` - Specific model to use
-+  - `:temperature` - Sampling temperature (0.0 to 2.0)
++  - `:provider` - Specific provider to use (default: configured default)
++  - `:model` - Specific model to use (auto-selected if not provided)
++  - `:stream` - Enable streaming response (default: false)
++  - `:temperature` - Sampling temperature (default: 0.7)
 +  - `:max_tokens` - Maximum tokens to generate
-+  - `:top_p` - Nucleus sampling parameter
-+  - `:stream` - Enable streaming (default: false)
-+  - `:stream_to` - Process to receive stream chunks
-+  - `:schema` - Expected output schema for structured responses
-+  - `:track` - Return metrics alongside the response能结果 (default: false)
-+  - `:cache` - Use response cache (default: true)
-+  - `:fallback` - Enable fallback to other providers (default: true)
-+  - `:timeout` - Request timeout in milliseconds
++  - `:fallback` - Enable/disable fallback (default: true)
++  - `:cache` - Enable/disable caching (default: true)
++  - `:track_cost` - Enable/disable cost tracking (default: true)
++  - `:monitor` - Enable/disable performance monitoring (default: true)
++
 +  """
-+  @spec complete(String.t(), keyword()) :: completion_result()
-+  def complete(prompt, opts \\ []) do
++  @spec call(prompt(), opts()) :: {:ok, response()} | error()
++  def call(prompt, opts \\ []) do
 +    start_time = System.monotonic_time()
-+    cache_key = if Keyword.get(opts, :cache, true), do: Cache.key(prompt, opts), else: nil
++    opts = normalize_opts(opts)
 +
-+    # Try cache first
-+    with :miss <- maybe_read_cache(cache_key),
-+         {:ok, provider, model} <- select_provider_and_model(opts),
-+         {:ok, result, metrics} <- execute_with_fallback(provider, model, prompt, opts) do
-+
-+      # Write to cache if enabled
-+      :ok = maybe_write_cache(cache_key, result)
-+
-+      # Track cost and performance
-+      track_metrics(metrics, provider, model, prompt, start_time)
-+
-+      return_result(result, metrics, opts)
++    with {:ok, provider} <- get_provider(opts),
++         {:ok, model} <- get_model(provider, opts),
++         {:ok, cached} <- maybe_get_cached(prompt, model, opts),
++         {:ok, response} <- do_call(provider, model, prompt, cached, opts) do
++      track_performance(start_time, provider, model, response, opts)
++      track_cost(provider, model, response, opts)
++      {:ok, response}
 +    else
-+      {:hit, cached_result} ->
-+        Logger.debug("LLM cache hit for prompt")
-+        return_result(cached_result, %{}, opts)
-+
 +      {:error, reason} ->
-+        Logger.error("LLM completion failed: #{inspect(reason)}")
-+        {:error, reason}
++        handle_fallback(prompt, reason, opts)
 +    end
 +  end
 +
 +  @doc """
-+  Generates a chat completion from a list of messages.
-+
-+  Messages should be in the format: `[%{"role" => "user", "content" => "Hello"}, ...]`
-+  or `[%{role: "user", content: "Hello"}, ...]`
++  Makes an LLM call, raising on error.
 +  """
-+  @spec chat(list(map()), keyword()) :: completion_result()
-+  def chat(messages, opts \\ []) do
-+    start_time = System.monotonic_time()
-+    cache_key = if Keyword.get(opts, :cache, true), do: Cache.key({:chat, messages}, opts), else: nil
++  @spec call!(prompt(), opts()) :: response()
++  def call!(prompt, opts \\ []) do
++    case call(prompt, opts) do
++      {:ok, response} -> response
++      {:error, reason} -> raise "LLM call failed: #{inspect(reason)}"
++    end
++  end
 +
-+    with :miss <- maybe_read_cache(cache_key),
-+         {:ok, provider, model} <- select_provider_and_model(opts),
-+         {:ok, result, metrics} <- execute_chat_with_fallback(provider, model, messages, opts) do
++  @doc """
++  Streams an LLM response.
++  """
++  @spec stream(prompt(), opts()) :: Enumerable.t()
++  def stream(prompt, opts \\ []) do
++    opts = Keyword.put(opts, :stream, true)
 +
-+      :ok = maybe_write_cache(cache_key, result)
-+      track_metrics(metrics, provider, model, messages,
++    case call(prompt, opts) do
++      {:ok, %Lux.LLM.Response{stream: stream}} when is_function(stream) ->
++        stream
++      {:ok, response} ->
++        [response]
++      {:error, reason} ->
++        raise "LLM stream failed: #{inspect(reason)}"
++    end
++  end
++
++  @doc """
++  Returns a list of available providers.
++  """
++  @spec list_providers() :: list(provider_name())
++  def list_providers do
++    ProviderRegistry.list_providers()
++  end
++
++  @doc """
++  Returns information about a specific provider.
++  """
++  @spec provider_info(provider_name()) :: {:ok, map()} | error()
++  def provider_info(provider) do
++    ProviderRegistry.get_provider(provider)
++  end
++
++  @doc """
++  Returns available models for a provider.
++  """
++  @spec list_models(provider_name()) :: list(model_name())
++  def list_models(provider) do
++    case ProviderRegistry.get_provider(provider) do
++      {:ok, config} -> config[:models] || []
++      {:error, _} -> []
++    end
++  end
++
++  @doc """
++  Returns cost statistics.
++  """
++  @spec cost_stats() :: map()
++  def cost_stats do
++    CostTracker.stats()
++  end
++
++  @doc """
++  Returns performance statistics.
++  """
++  @spec performance_stats() :: map()
++  def performance_stats do
++    PerformanceMonitor.stats()
++  end
++
++  @doc """
++  Clears the response cache.
++  """
++  @spec clear_cache() :: :ok
++  def clear_cache do
++    Lux.LLM.Cache.clear()
++  end
++
++  # ============================================================================
++  # Private Functions
++  # ============================================================================
++
++ 
