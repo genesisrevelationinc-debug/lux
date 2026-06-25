@@ -1,173 +1,147 @@
-```diff
+ ```diff
 --- /dev/null
 +++ b/lux/lib/lux/llm/perplexity.ex
 @@ -0,0 +1,218 @@
 +defmodule Lux.LLM.Perplexity do
 +  @moduledoc """
-+  Perplexity AI integration for Lux.
++  Perplexity AI API integration for Lux.
 +
-+  Provides access to Perplexity AI's language models with support for:
-+  - Streaming responses
++  Provides access to Perplexity's language models with support for:
++  - Streaming and non-streaming responses
 +  - Model selection
 +  - Cost tracking
 +  - Error handling
-+
-+  ## Configuration
-+
-+  Configure the Perplexity client in your application config:
-+
-+      config :lux, :perplexity,
-+        api_key: System.get_env("PERPLEXITY_API_KEY"),
-+        base_url: "https://api.perplexity.ai",
-+        default_model: "sonar",
-+        timeout: 30_000
-+
-+  ## Usage
-+
-+      iex> alias Lux.LLM.Perplexity
-+      iex> Perplexity.chat("What is the capital of France?")
-+      {:ok, %{content: "The capital of France is Paris.", tokens: 10, cost: 0.0001}}
-+
-+      iex> Perplexity.chat("Explain quantum computing", stream: true)
-+      {:ok, #Stream<[...]>}
 +  """
++
++  require Logger
 +
 +  alias Lux.LLM.Perplexity.CostTracker
 +
 +  @default_base_url "https://api.perplexity.ai"
-+  @default_model "sonar"
-+  @default_timeout 30_000
++  @api_version "2023-06-15"
 +
-+  @valid_models [
-+    "sonar",
-+    "sonar-pro",
-+    "sonar-reasoning",
-+    "sonar-deep-research",
-+    "sonar-reasoning-pro"
-+  ]
++  # Available Perplexity models
++  @models %{
++    "sonar-small-chat" => %{name: "Sonar Small Chat", context_length: 16384},
++    "sonar-medium-chat" => %{name: "Sonar Medium Chat", context_length: 16384},
++    "sonar-large-chat" => %{name: "Sonar Large Chat", context_length: 16384},
++    "sonar-small-online" => %{name: "Sonar Small Online", context_length: 12000},
++    "sonar-medium-online" => %{name: "Sonar Medium Online", context_length: 12000},
++    "sonar-large-online" => %{name: "Sonar Large Online", context_length: 12000},
++    "codellama" => %{name: "CodeLlama", context_length: 16384},
++    "llama-2-70b-chat" => %{name: "Llama 2 70B Chat", context_length: 16384},
++    "mistral-7b-instruct" => %{name: "Mistral 7B Instruct", context_length: 16384},
++    "mixtral-8x7b-instruct" => %{name: "Mixtral 8x7B Instruct", context_length: 16384}
++  }
++
++  # Pricing per 1M tokens (input, output)
++  @pricing %{
++    "sonar-small-chat" => {0.20, 0.20},
++    "sonar-medium-chat" => {0.20, 0.20},
++    "sonar-large-chat" => {0.20, 0.20},
++    "sonar-small-online" => {0.20, 0.20},
++    "sonar-medium-online" => {0.20, 0.20},
++    "sonar-large-online" => {0.20, 0.20},
++    "codellama" => {0.20, 0.20},
++    "llama-2-70b-chat" => {0.70, 0.70},
++    "mistral-7b-instruct" => {0.20, 0.20},
++    "mixtral-8x7b-instruct" => {0.60, 0.60}
++  }
 +
 +  @type message :: %{role: String.t(), content: String.t()}
-+  @type chat_response :: %{
-+          content: String.t(),
-+          tokens: non_neg_integer(),
-+          cost: float(),
-+          model: String.t()
-+        }
-+  @type error :: {:error, String.t() | atom()}
++  @type completion_response :: %{
++    id: String.t(),
++    model: String.t(),
++    content: String.t(),
++    usage: map(),
++    citations: list()
++  }
++  @type stream_chunk :: %{
++    id: String.t(),
++    model: String.t(),
++    delta: String.t(),
++    finish_reason: String.t() | nil
++  }
 +
 +  @doc """
-+  Sends a chat completion request to Perplexity AI.
-+
-+  ## Options
-+
-+  - `:model` - Model to use (default from config or "sonar")
-+  - `:temperature` - Sampling temperature (0.0 to 2.0, default 0.7)
-+  - `:max_tokens` - Maximum tokens in response (default 1024)
-+  - `:stream` - Enable streaming (default false)
-+  - `:system` - System message to prepend
-+
-+  ## Examples
-+
-+      iex> Perplexity.chat("Hello!")
-+      {:ok, %{content: "Hello! How can I help you today?", tokens: 10, cost: 0.0001, model: "sonar"}}
-+
-+      iex> Perplexity.chat("Hello!", model: "sonar-pro", temperature: 0.5)
-+      {:ok, %{content: "Hello! How can I help you today?", tokens: 10, cost: 0.0002, model: "sonar-pro"}}
++  Returns a list of available Perplexity models.
 +  """
-+  @spec chat(String.t() | [message()], keyword()) ::
-+          {:ok, chat_response()} | {:ok, Enumerable.t()} | error()
-+  def chat(messages, opts \\ []) when is_binary(messages) or is_list(messages) do
-+    messages = normalize_messages(messages)
-+    model = opts[:model] || default_model()
-+    stream? = Keyword.get(opts, :stream, false)
++  @spec list_models() :: list({String.t(), map()})
++  def list_models do
++    Map.to_list(@models)
++  end
 +
-+    with :ok <- validate_model(model),
-+         {:ok, request_body} <- build_request_body(messages, model, opts) do
-+      if stream? do
-+        stream_chat(request_body, model)
-+      else
-+        do_chat(request_body, model)
-+      end
++  @doc """
++  Returns model information for the given model ID.
++  """
++  @spec get_model(String.t()) :: {:ok, map()} | {:error, :unknown_model}
++  def get_model(model_id) do
++    case Map.get(@models, model_id) do
++      nil -> {:error, :unknown_model}
++      info -> {:ok, info}
 +    end
 +  end
 +
 +  @doc """
-+  Returns the list of available Perplexity models.
-+  """
-+  @spec available_models() :: [String.t()]
-+  def available_models, do: @valid_models
-+
-+  @doc """
-+  Validates if a model name is supported.
++  Validates if a model ID is supported.
 +  """
 +  @spec valid_model?(String.t()) :: boolean()
-+  def valid_model?(model) when is_binary(model) do
-+    model in @valid_models
++  def valid_model?(model_id) do
++    Map.has_key?(@models, model_id)
++  end
++
++  @doc """
++  Calculates the estimated cost for a request based on token usage.
++  """
++  @spec estimate_cost(String.t(), integer(), integer()) :: {:ok, float()} | {:error, atom()}
++  def estimate_cost(model_id, input_tokens, output_tokens) do
++    case Map.get(@pricing, model_id) do
++      nil ->
++        {:error, :unknown_model}
++
++      {input_price, output_price} ->
++        cost = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
++        {:ok, cost}
++    end
++  end
++
++  @doc """
++  Sends a completion request to the Perplexity API.
++  """
++  @spec completion(String.t(), list(message()), keyword()) ::
++          {:ok, completion_response()} | {:error, term()}
++  def completion(model_id, messages, opts \\ []) do
++    with :ok <- validate_model(model_id),
++         {:ok, body} <- build_request_body(model_id, messages, opts),
++         {:ok, response} <- do_request("/chat/completions", body, opts) do
++      parse_completion_response(response)
++    end
++  end
++
++  @doc """
++  Streams a completion request from the Perplexity API.
++  """
++  @spec stream_completion(String.t(), list(message()), keyword()) ::
++          {:ok, Enumerable.t()} | {:error, term()}
++  def stream_completion(model_id, messages, opts \\ []) do
++    with :ok <- validate_model(model_id),
++         {:ok, body} <- build_request_body(model_id, messages, Keyword.put(opts, :stream, true)) do
++      do_stream_request("/chat/completions", body, opts)
++    end
 +  end
 +
 +  # Private functions
 +
-+  defp normalize_messages(text) when is_binary(text) do
-+    [%{role: "user", content: text}]
-+  end
-+
-+  defp normalize_messages(messages) when is_list(messages) do
-+    Enum.map(messages, fn
-+      %{role: _, content: _} = msg -> msg
-+      %{content: _} = msg -> Map.put(msg, :role, "user")
-+      text when is_binary(text) -> %{role: "user", content: text}
-+    end)
-+  end
-+
-+  defp validate_model(model) do
-+    if valid_model?(model) do
++  defp validate_model(model_id) do
++    if valid_model?(model_id) do
 +      :ok
 +    else
-+      {:error, "Invalid model: #{model}. Valid models: #{Enum.join(@valid_models, ", ")}"}
++      {:error, {:unknown_model, model_id}}
 +    end
 +  end
 +
-+  defp build_request_body(messages, model, opts) do
++  defp build_request_body(model_id, messages, opts) do
 +    body = %{
-+      model: model,
++      model: model_id,
 +      messages: messages,
-+      temperature: opts[:temperature] || 0.7,
-+      max_tokens: opts[:max_tokens] || 1024
-+    }
-+
-+    body =
-+      if system = opts[:system] do
-+        Map.put(body, :system, system)
-+      else
-+        body
-+      end
-+
-+    {:ok, body}
-+  end
-+
-+  defp do_chat(body, model) do
-+    case http_client().post(chat_url(), body, headers()) do
-+      {:ok, %{status: 200, body: response}} ->
-+        parse_response(response, model)
-+
-+      {:ok, %{status: status, body: response}} ->
-+        {:error, "Perplexity API error (HTTP #{status}): #{inspect(response)}"}
-+
-+      {:error, reason} ->
-+        {:error, "Request failed: #{inspect(reason)}"}
-+    end
-+  end
-+
-+  defp stream_chat(body, model) do
-+    stream_body = Map.put(body, :stream, true)
-+
-+    stream =
-+      Stream.resource(
-+        fn -> stream_body end,
-+        fn body ->
-+          case http_client().post(chat_url(), body, headers(), stream: true) do
-+            {:ok, %{status: 200, body: response}} ->
-+              {[response], body}
-+
-+            {:ok, %{status: status, body: response}} ->
-+              {[{:error, "Per
++      max_tokens: Keyword.get(opts, :max_tokens, 1024
