@@ -5,51 +5,52 @@ defmodule Lux.LLM.Provider.Model do
 
   @type t :: %__MODULE__{
           id: String.t(),
+          provider: module(),
           name: String.t(),
-          provider: atom(),
           capabilities: [atom()],
+          max_tokens: integer(),
           context_window: integer(),
-          max_output_tokens: integer(),
-          pricing: %{
-            input_per_1k: float(),
-            output_per_1k: float()
-          },
-          features: [atom()],
+          cost_per_input_token: Decimal.t(),
+          cost_per_output_token: Decimal.t(),
           metadata: map()
         }
 
   defstruct [
     :id,
-    :name,
     :provider,
+    :name,
     :capabilities,
+    :max_tokens,
     :context_window,
-    :max_output_tokens,
-    :pricing,
-    :features,
+    :cost_per_input_token,
+    :cost_per_output_token,
     :metadata
   ]
 
   @doc """
-  Creates a new Model struct.
+  Creates a new Model struct with the given attributes.
   """
   def new(attrs) do
     struct!(__MODULE__, attrs)
   end
 
   @doc """
-  Checks if a model supports a specific capability.
+  Checks if the model supports a given capability.
   """
-  def supports?(%__MODULE__{capabilities: capabilities}, capability) do
+  def supports?(%__MODULE__{capabilities: capabilities}, capability) when is_atom(capability) do
     capability in capabilities
   end
 
   @doc """
-  Calculates the estimated cost for a given token usage.
+  Calculates the estimated cost for given input and output tokens.
   """
-  def estimate_cost(%__MODULE__{pricing: pricing}, input_tokens, output_tokens) do
-    input_cost = (input_tokens / 1000) * pricing.input_per_1k
-    output_cost = (output_tokens / 1000) * pricing.output_per_1k
-    input_cost + output_cost
+  def estimate_cost(%__MODULE__{} = model, input_tokens, output_tokens) do
+    input_cost = Decimal.mult(model.cost_per_input_token, Decimal.new(input_tokens))
+    output_cost = Decimal.mult(model.cost_per_output_token, Decimal.new(output_tokens))
+    Decimal.add(input_cost, output_cost)
+  end
+
+  def estimate_cost(_, _, _) do
+    nil
   end
 end
