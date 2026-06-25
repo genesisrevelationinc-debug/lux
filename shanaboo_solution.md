@@ -1,4 +1,4 @@
-```diff
+ ```diff
 --- a/lux/mix.exs
 +++ b/lux/mix.exs
 @@ -1,4 +1,5 @@
@@ -7,162 +7,197 @@
    use Mix.Project
  
    def project do
-@@ -14,6 +15,7 @@ defmodule Lux.MixProject do
-       deps: deps(),
-       docs: docs(),
-       package: package(),
-+      compilers: [:rustler] ++ Mix.compilers(),
-       aliases: aliases()
+@@ -7,7 +8,8 @@ defmodule Lux.MixProject do
+       version: "0.1.0",
+       elixir: "~> 1.14",
+       start_permanent: Mix.env() == :prod,
+-      deps: deps()
++      deps: deps(),
++      compilers: [:rustler] ++ Mix.compilers()
      ]
    end
-@@ -37,6 +39,7 @@ defmodule Lux.MixProject do
-       {:req, "~> 0.5"},
-       {:nimble_options, "~> 1.1"},
-       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
-+      {:rustler, "~> 0.32"},
-       {:mimic, "~> 1.7", only: :test}
+ 
+@@ -21,7 +23,8 @@ defmodule Lux.MixProject do
+   # Run "mix help deps" to learn about dependencies.
+   defp deps do
+     [
+-      # {:dep_from_hexpm, "~> 0.3.0"},
++      {:rustler, "~> 0.30.0", runtime: false},
++      {:rustler_precompiled, "~> 0.7"}
+       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
      ]
    end
 --- /dev/null
-+++ b/lux/priv/rust/.gitignore
-@@ -0,0 +1,3 @@
-+/target
-+**/*.rs.bk
-+Cargo.lock
++++ b/lux/lib/lux/rust.ex
+@@ -0,0 +1,85 @@
++defmodule Lux.Rust do
++  @moduledoc """
++  Core Rust integration module for Lux.
++
++  Provides FFI bindings to Rust NIFs for high-performance operations.
++  """
++
++  alias Lux.Rust.Native
++
++  @doc """
++  Adds two integers using Rust.
++
++  ## Examples
++
++      iex> Lux.Rust.add(1, 2)
++  3
++
++  """
++  @spec add(integer(), integer()) :: integer()
++  def add(a, b) do
++    Native.add(a, b)
++  end
++
++  @doc """
++  Converts an Elixir string to uppercase using Rust.
++
++  ## Examples
++
++      iex> Lux.Rust.to_uppercase("hello")
++  "HELLO"
++
++  """
++  @spec to_uppercase(String.t()) :: String.t()
++  def to_uppercase(str) do
++    Native.to_uppercase(str)
++  end
++
++  @doc """
++  Computes the length of a list using Rust.
++
++  ## Examples
++
++      iex> Lux.Rust.list_length([1, 2, 3])
++  3
++
++  """
++  @spec list_length(list()) :: non_neg_integer()
++  def list_length(list) do
++    Native.list_length(list)
++  end
++
++  @doc """
++  Converts a map to a JSON string using Rust.
++
++  ## Examples
++
++      iex> Lux.Rust.map_to_json(%{"key" => "value"})
++  ~s({"key":"value"})
++
++  """
++  @spec map_to_json(map()) :: String.t()
++  def map_to_json(map) do
++    Native.map_to_json(map)
++  end
++
++  @doc """
++  Parses a JSON string to a map using Rust.
++
++  ## Examples
++
++      iex> Lux.Rust.json_to_map(~s({"key":"value"}))
++  %{"key" => "value"}
++
++  """
++  @spec json_to_map(String.t()) :: {:ok, map()} | {:error, String.t()}
++  def json_to_map(json) do
++    case Native.json_to_map(json) do
++      {:ok, map} -> {:ok, map}
++      {:error, reason} -> {:error, reason}
++      other -> other
++    end
++  end
++end
 --- /dev/null
-+++ b/lux/priv/rust/Cargo.toml
-@@ -0,0 +1,16 @@
-+[package]
-+name = "lux_rust"
-+version = "0.1.0"
-+edition = "2021"
++++ b/lux/lib/lux/rust/native.ex
+@@ -0,0 +1,24 @@
++defmodule Lux.Rust.Native do
++  @moduledoc """
++  NIF bindings for the Rust core.
 +
-+[lib]
-+name = "lux_rust"
-+crate-type = ["cdylib"]
++  This module uses Rustler to load the native implementation.
++  """
 +
-+[dependencies]
-+rustler = "0.32"
-+thiserror = "1.0"
++  use Rustler,
++    otp_app: :lux,
++    crate: "lux_rust",
++    base_metadata: "lux_rust"
 +
-+[profile.release]
-+opt-level = 3
-+lto = true
++  # NIF functions are defined here with their signatures
++  def add(_a, _b), do: :erlang.nif_error(:nif_not_loaded)
++
++  def to_uppercase(_str), do: :erlang.nif_error(:nif_not_loaded)
++
++  def list_length(_list), do: :erlang.nif_error(:nif_not_loaded)
++
++  def map_to_json(_map), do: :erlang.nif_error(:nif_not_loaded)
++
++  def json_to_map(_json), do: :erlang.nif_error(:nif_not_loaded)
++
++  def echo(_term), do: :erlang.nif_error(:nif_not_loaded)
++end
 --- /dev/null
-+++ b/lux/priv/rust/src/lib.rs
-@@ -0,0 +1,218 @@
-+use rustler::{Atom, Encoder, Env, Error as RustlerError, NifResult, Term};
-+use std::sync::Arc;
++++ b/lux/lib/lux/rust/error.ex
+@@ -0,0 +1,40 @@
++defmodule Lux.Rust.Error do
++  @moduledoc """
++  Error handling for Rust NIF operations.
 +
-+mod atoms;
-+mod conversion;
-+mod error;
++  Provides structured error types for FFI boundary failures.
++  """
 +
-+use conversion::{from_elixir, to_elixir, ElixirTerm, RustTerm};
-+use error::LuxError;
++  defexception [:message, :type, :source]
 +
-+/// Initialize the Rust NIF module
-+rustler::init!("Elixir.Lux.RustCore", [add, multiply, process_term, safe_divide]);
-+
-+/// Adds two integers safely with overflow checking
-+#[rustler::nif]
-+fn add(a: i64, b: i64) -> NifResult<i64> {
-+    a.checked_add(b)
-+        .ok_or_else(|| LuxError::Overflow.into_rustler_error())
-+}
-+
-+/// Multiplies two integers safely with overflow checking
-+#[rustler::nif]
-+fn multiply(a: i64, b: i64) -> NifResult<i64> {
-+    a.checked_mul(b)
-+        .ok_or_else(|| LuxError::Overflow.into_rustler_error())
-+}
-+
-+/// Safely divides two numbers with zero division protection
-+#[rustler::nif]
-+fn safe_divide(a: f64, b: f64) -> NifResult<f64> {
-+    if b == 0.0 {
-+        return Err(LuxError::DivisionByZero.into_rustler_error());
-+    }
-+    Ok(a / b)
-+}
-+
-+/// Processes an Elixir term and returns a transformed term
-+#[rustler::nif]
-+fn process_term<'a>(env: Env<'a>, term: Term<'a>) -> NifResult<Term<'a>> {
-+    let elixir_term = from_elixir(term)?;
-+    let rust_term = elixir_term.to_rust()?;
-+    let result = rust_term.to_elixir(env)?;
-+    Ok(result)
-+}
-+
-+/// Trait for converting types between Elixir and Rust
-+pub trait TypeConversion {
-+    type RustType;
-+    fn to_rust(self) -> Result<Self::RustType, LuxError>;
-+    fn to_elixir<'a>(self, env: Env<'a>) -> Result<Term<'a>, LuxError>;
-+}
-+
-+impl TypeConversion for ElixirTerm<'_> {
-+    type RustType = RustTerm;
-+
-+    fn to_rust(self) -> Result<Self::RustType, LuxError> {
-+        match self {
-+            ElixirTerm::Integer(i) => Ok(RustTerm::Integer(i)),
-+            ElixirTerm::Float(f) => Ok(RustTerm::Float(f)),
-+            ElixirTerm::Atom(a) => Ok(RustTerm::Atom(a.to_string())),
-+            ElixirTerm::Binary(s) => Ok(RustTerm::String(s)),
-+            ElixirTerm::List(l) => {
-+                let converted: Result<Vec<_>, _> = l.into_iter()
-+                    .map(|item| item.to_rust())
-+                    .collect();
-+                Ok(RustTerm::List(converted?))
-+            }
-+            ElixirTerm::Map(m) => {
-+                let mut map = std::collections::HashMap::new();
-+                for (k, v) in m {
-+                    map.insert(k.to_rust()?, v.to_rust()?);
-+                }
-+                Ok(RustTerm::Map(map))
-+            }
++  @type t :: %__MODULE__{
++          message: String.t(),
++          type: atom(),
++          source: term() | nil
 +        }
++
++  @doc """
++  Creates a new Rust error.
++  """
++  @spec new(String.t(), atom(), term() | nil) :: t()
++  def new(message, type \\ :unknown, source \\ nil) do
++    %__MODULE__{
++      message: message,
++      type: type,
++      source: source
 +    }
++  end
 +
-+    fn to_elixir<'a>(self, env: Env<'a>) -> Result<Term<'a>, LuxError> {
-+        match self {
-+            ElixirTerm::Integer(i) => Ok(i.encode(env)),
-+            ElixirTerm::Float(f) => Ok(f.encode(env)),
-+            ElixirTerm::Atom(a) => Ok(a.encode(env)),
-+            ElixirTerm::Binary(s) => Ok(s.encode(env)),
-+            ElixirTerm::List(l) => {
-+                let converted: Result<Vec<_>, _> = l.into_iter()
-+                    .map(|item| item.to_elixir(env))
-+                    .collect();
-+                Ok(converted?.encode(env))
-+            }
-+            ElixirTerm::Map(m) => {
-+                let converted: Result<Vec<_>, _> = m.into_iter()
-+                    .map(|(k, v)| {
-+                        let key = k.to_elixir(env)?;
-+                        let val = v.to_elixir(env)?;
-+                        Ok((key, val))
-+                    })
-+                    .collect();
-+                Ok(converted?.encode(env))
-+            }
-+        }
-+    }
-+}
++  @doc """
++  Converts a Rust error to a string representation.
++  """
++  @spec to_string(t()) :: String.t()
++  def to_string(%__MODULE__{} = error) do
++    "Rust Error [#{error.type}]: #{error.message}"
++  end
 +
-+impl TypeConversion for RustTerm {
-+    type RustType = RustTerm;
++  defimpl String.Chars do
++    def to_string(error) do
++      Lux.Rust.Error.to_string(error)
++    end
++  end
++end
+--- /dev/null
++++ b/lux/lib/lux/rust/type_conversion.ex
+@@ -0,0 +1,85 @@
++defmodule Lux.Rust.TypeConversion do
++  @moduledoc """
++  Type conversion utilities between Elixir and Rust types.
 +
-+    fn to_rust(self) -> Result<Self::RustType, LuxError> {
-+        Ok(self)
-+    }
++  Handles safe conversion of primitive types across the FFI boundary.
++  """
 +
-+    fn to_elixir<'a>(self, env: Env<'a>) -> Result<Term<'a>, LuxError> {
-+        match self {
-+            RustTerm::Integer(i) => Ok(i.encode(env)),
-+            RustTerm::Float(f) => Ok(f.encode(env)),
-+            RustTerm
++  @doc """
++  Converts an Elixir term to a Rust-compatible representation.
++
++  ## Examples
++
++
