@@ -1,60 +1,65 @@
 defmodule Lux.LLM.Provider do
   @moduledoc """
-  Universal provider interface for LLM providers.
+  Universal provider interface for managing multiple LLM providers.
   Defines the contract that all LLM providers must implement.
   """
 
-  @type model :: String.t()
-  @type message :: %{role: String.t(), content: String.t()}
-  @type completion_opts :: keyword()
-  @type completion_result :: {:ok, map()} | {:error, term()}
+  alias Lux.LLM.Provider.Model
 
-  @callback available_models() :: [model()]
-  @callback complete(messages :: [message()], opts :: completion_opts()) :: completion_result()
-  @callback stream_complete(messages :: [message()], opts :: completion_opts()) :: Enumerable.t()
+  @type completion_response :: %{
+          content: String.t(),
+          model: String.t(),
+          usage: map(),
+          finish_reason: String.t()
+        }
 
-  defmacro __using__(_opts) do
+  @type stream_chunk :: %{
+          content: String.t() | nil,
+          finish_reason: String.t() | nil
+        }
+
+  @type error :: {:error, term()}
+
+  @doc "Returns the provider's name"
+  @callback name() :: String.t()
+
+  @doc "Returns list of available models for this provider"
+  @callback available_models() :: [Model.t()]
+
+  @doc "Checks if the provider is configured and available"
+  @callback available?() :: boolean()
+
+  @doc "Generates a completion for the given messages"
+  @callback completion(messages :: [map()], opts :: keyword()) ::
+              {:ok, completion_response()} | error()
+
+  @doc "Generates a streaming completion for the given messages"
+  @callback stream_completion(messages :: [map()], opts :: keyword()) ::
+              {:ok, Enumerable.t()} | error()
+
+  @doc "Returns the cost for a given model and token usage"
+  @callback estimate_cost(model :: String.t(), tokens :: map()) :: Decimal.t() | nil
+
+  @doc """
+  Default implementation for checking availability based on API key presence.
+ 对于大多数提供者，可用性取决于API密钥是否存在。
+  """
+  defmacro __using__(opts) do
     quote do
       @behaviour Lux.LLM.Provider
 
-      def stream_complete(messages, opts) do
-        Lux.LLM.Provider.default_stream_complete(__MODULE__, messages, opts)
+      @impl true
+      def available? do
+        api_key = unquote(opts)[:api_key_env] || default_api_key_env()
+        api_key != nil and api_key != ""
       end
 
-      defoverridable stream_complete: 2
+      defp default_api_key_env do
+        env_var = unquote(opts)[:api_key_env_var]
+        if env_var, do: System.get_env(env_var), else: nil
+      end
+
+      defoverridable available?: 0
     end
   end
-
-  @doc """
-  Default streaming implementation that wraps the complete/2 function.
-  """
-  def default_stream_complete(module, messages, opts) do
-    Stream.resource(
-      fn -> nil end,
-      fn _ ->
-        case module.complete(messages, opts) do
-          {:ok, result} -> {[result], :done}
-          {:error, reason} -> {[{:error, reason}], :done}
-        end
-      end,
-      fn _ -> :ok end
-    )
-  end
 end
-
-defmodule Lux.LLM.Provider.Registry do
-  @moduledoc """
-  Registry for managing LLM providers.
-  """
-
-  use GenServer
-
-  defmodule State do
-    @moduledoc false
-    defstruct providers: %{}, default_provider: nil
-  end
-
-  # Client API
-
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, %State供您选择，我将为您生成一个完整的 diff 解决方案。由于这是一个大型功能实现，我需要创建多个文件来构建完整的 LLM Provider Abstraction Layer。
