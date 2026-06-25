@@ -1,18 +1,17 @@
- Looking at this issue, I need to implement advanced Discord features for the Lux framework. Let me analyze what's needed:
+ Looking at this issue, I need to implement advanced Discord features for the Lux framework. Let me analyze the repository structure and create the necessary files.
 
+Based on the repository structure, this is an Elixir project with a `lux` core and `lux_app`. The issue requires implementing:
 1. Voice Channel Support
 2. Rich Presence Management
 3. Webhook System
 4. Analytics System
 
-Since this is an large feature implementation and I need to infer the structure, I'll look at the existing repo structure. The main code appears to be in the `lux` directory. Let me create the necessary Discord integration modules.
-
-Based on the issue description mentioning "multimodal signals" and the framework's architecture (Agents, Signals, Prisms, Beams, Lenses), I'll implement these features as modules within the Lux framework.
+Let me create the necessary files for Discord integration with these advanced features.
 
 ```diff
 --- /dev/null
 +++ b/lux/lib/lux/integrations/discord/voice.ex
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,287 @@
 +defmodule Lux.Integrations.Discord.Voice do
 +  @moduledoc """
 +  Voice channel support for Discord integration.
@@ -21,9 +20,7 @@ Based on the issue description mentioning "multimodal signals" and the framework
 +
 +  require Logger
 +
-+  alias Lux.Integrations.Discord.Voice.AudioStream
-+  alias Lux.Integrations.Discord.Voice.MusicQueue
-+  alias Lux.Integrations.Discord.Voice.VoiceActivity
++  alias Lux.Integrations.Discord.Voice.{Connection, AudioStream, VAD, MusicPlayer}
 +
 +  @type voice_state :: :idle | :connecting | :connected | :disconnected | :error
 +  @type audio_format :: :opus | :pcm | :mp3 | :ogg
@@ -37,19 +34,18 @@ Based on the issue description mentioning "multimodal signals" and the framework
 +    :ssrc,
 +    :state,
 +    :heartbeat_interval,
-+    :udp_socket,
-+    :ws_pid,
-+    :secret_key,
-+    :audio_format,
++    :connection_pid,
++    :audio_stream,
++    :vad_state,
 +    :music_queue,
-+    :vad_enabled,
-+    :speaking,
-+    :deaf,
-+    :mute
++    :current_track,
++    :volume,
++    :mute,
++    :deaf
 +  ]
 +
 +  @doc """
-+  Creates a new voice connection struct.
++  Creates a new voice state for a guild.
 +  """
 +  @spec new(String.t(), String.t()) :: %__MODULE__{}
 +  def new(guild_id, channel_id) do
@@ -57,12 +53,11 @@ Based on the issue description mentioning "multimodal signals" and the framework
 +      guild_id: guild_id,
 +      channel_id: channel_id,
 +      state: :idle,
-+      audio_format: :opus,
-+      music_queue: MusicQueue.new(),
-+      vad_enabled: true,
-+      speaking: false,
-+      deaf: false,
-+      mute: false
++      vad_state: VAD.new(),
++      music_queue: :queue.new(),
++      volume: 1.0,
++      mute: false,
++      deaf: false
 +    }
 +  end
 +
@@ -70,114 +65,104 @@ Based on the issue description mentioning "multimodal signals" and the framework
 +  Joins a voice channel.
 +  """
 +  @spec join_channel(%__MODULE__{}) :: {:ok, %__MODULE__{}} | {:error, term()}
-+  def join_channel(%__MODULE__{guild_id: guild_id, channel_id: channel_id} = voice) do
-+    Logger.info("Joining voice channel #{channel_id} in guild #{guild_id}")
-+
-+    case establish_connection(voice) do
++  def join_channel(%__MODULE__{state: :idle} = voice) do
++    case Connection.connect(voice) do
 +      {:ok, connected_voice} ->
-+        voice = %{connected_voice | state: :connected}
-+        {:ok, voice}
++        {:ok, %{connected_voice | state: :connected}}
 +
 +      {:error, reason} ->
-+        voice = %{voice | state: :error}
 +        {:error, reason}
 +    end
++  end
++
++  def join_channel(%__MODULE__{state: state}) when state in [:connecting, :connected] do
++    {:error, :already_connected}
 +  end
 +
 +  @doc """
 +  Leaves the current voice channel.
 +  """
-+  @spec leave_channel(%__MODULE__{}) :: {:ok, %__MODULE__{}}
-+  def leave_channel(voice) do
-+    Logger.info("Leaving voice channel #{voice.channel_id}")
-+
-+    close_connection(voice)
-+
-+    {:ok, %{voice | state: :disconnected, channel_id: nil, ws_pid: nil, udp_socket: nil}}
-+  end
-+
-+  @doc """
-+  Starts audio streaming with the specified format.
-+  """
-+  @spec start_streaming(%__MODULE__{}, audio_format()) :: {:ok, %__MODULE__{}} | {:error连同, term()}
-+  def start_streaming(voice, format \\ :opus) do
-+    Logger.info("Starting audio streaming with format: #{format}")
-+
-+    case AudioStream.start(format) do
-+      {:ok, stream_pid} ->
-+        voice = %{voice | audio_format: format}
-+        {:ok, voice}
++  @spec leave_channel(%__MODULE__{}) :: {:ok, %__MODULE__{}} | {:error, term()}
++  def leave_channel(%__MODULE__{state: :connected} = voice) do
++    case Connection.disconnect(voice) do
++      :ok ->
++        {:ok, %{voice | state: :idle, channel_id: nil, connection_pid: nil}}
 +
 +      {:error, reason} ->
 +        {:error, reason}
 +    end
 +  end
 +
++  def leave_channel(%__MODULE__{}) do
++    {:error, :not_connected}
++  end
++
 +  @doc """
-+  Stops audio streaming.
++  Starts audio streaming with (opus, pcm, etc.).
 +  """
-+  @spec stop_streaming(%__MODULE__{}) :: {:ok, %__MODULE__{}}
-+  def stop_streaming(voice) do
-+    Logger.info("Stopping audio streaming")
++  @spec start_stream(%__MODULE__{}, audio_format(), pid()) :: {:ok, %__MODULE__{}} | {:error, term()}
++  def start_stream(%__MODULE__{state: :connected} = voice, format, source_pid) do
++    case AudioStream.start(voice, format, source_pid) do
++      {:ok, stream_pid} ->
++        {:ok, %{voice | audio_stream: stream_pid}}
 +
-+    AudioStream.stop()
++      {:error, reason} ->
++        {:error, reason}
++    end
++  end
 +
-+    {:ok, %{voice | speaking: false}}
++  def start_stream(%__MODULE__{}, _format, _source_pid) do
++    {:error, :not_connected}
++  end
++
++  @doc """
++  Stops the current audio stream.
++  """
++  @spec stop_stream(%__MODULE__{}) :: {:ok, %__MODULE__{}} | {:error, term()}
++  def stop_stream(%__MODULE__{audio_stream: nil}), do: {:error, :no_active_stream}
++
++  def stop_stream(%__MODULE__{audio_stream: stream_pid} = voice) do
++    AudioStream.stop(stream_pid)
++    {:ok, %{voice | audio_stream: nil}}
 +  end
 +
 +  @doc """
 +  Enables voice activity detection.
 +  """
 +  @spec enable_vad(%__MODULE__{}) :: {:ok, %__MODULE__{}}
-+  def enable_vad(voice) do
-+    Logger.info("Enabling voice activity detection")
-+
-+    VoiceActivity.enable()
-+
-+    {:ok, %{voice | vad_enabled: true}}
++  def \\def enable_vad(%__MODULE__{vad_state: vad} = voice) do
++    updated_vad = VAD.enable(vad)
++    {:ok, %{voice | vad_state: updated_vad}}
 +  end
 +
 +  @doc """
 +  Disables voice activity detection.
 +  """
 +  @spec disable_vad(%__MODULE__{}) :: {:ok, %__MODULE__{}}
-+  def disable_vad(voice) do
-+    Logger.info("Disabling voice activity detection")
-+
-+    VoiceActivity.disable()
-+
-+    {:ok, %{voice | vad_enabled: false}}
++  def disable_vad(%__MODULE__{vad_state: vad} = voice) do
++    updated_vad = VAD.disable(vad)
++    {:ok, %{voice | vad_state: updated_vad}}
 +  end
 +
 +  @doc """
-+  Plays music from a URL or file path with queue management.
++  Plays a track in the voice channel.
 +  """
-+  @spec play_music(%__MODULE__{}, String.t()) :: {:ok, %__MODULE__{}} | {:error, term()}
-+  def play_music(voice, source) do
-+    Logger.info("Queueing music from: #{source}")
++  @spec play(%__MODULE__{}, String.t(), map()) :: {:ok, %__MODULE__{}} | {:error, term()}
++  def play(%__MODULE__{state: :connected} = voice, track_url, metadata) do
++    MusicPlayer.play(voice, track_url, metadata)
++  end
 +
-+    case MusicQueue.add(voice.music_queue, source) do
-+      {:ok, updated_queue} ->
-+        voice = %{voice | music_queue: updated_queue}
-+
-+        if MusicQueue.playing?(updated_queue) do
-+          {:ok, voice}
-+        else
-+          start_playback(voice)
-+        end
-+
-+      {:error, reason} ->
-+        {:error, reason}
-+    end
++  def play(%__MODULE__{}, _track_url, _metadata) do
++    {:error, :not_connected}
 +  end
 +
 +  @doc """
-+  Skips the current track and plays the next one in queue.
++  Adds a track to the music queue.
 +  """
-+  @spec skip_track(%__MODULE__{}) :: {:ok, %__MODULE__{}} | {:error, term()}
-+  def skip_track(voice) do
-+    Logger.info("Skipping current track")
++  @spec queue_track(%__MODULE__{}, String.t(), map()) :: {:ok, %__MODULE__{}}
++  def queue_track(%__MODULE__{music_queue: queue} = voice, track_url, metadata) do
++    updated_queue = :queue.in({track_url, metadata}, queue)
++    {:ok, %{voice | music_queue: updated_queue}}
++  end
 +
-+    case MusicQueue.next(voice.music_queue) do
-+      {:ok, next_track, updated_queue} ->
-+        voice = %{voice | music_queue
++ 
