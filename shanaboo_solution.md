@@ -1,203 +1,179 @@
  ```diff
 --- a/lux/mix.exs
 +++ b/lux/mix.exs
-@@ -1,4 +1,5 @@
+@@ -1,6 +1,7 @@
  defmodule Lux.MixProject do
-+  @moduledoc false
    use Mix.Project
  
++  @rustler_mode if System.get_env("RUSTLER_PRECOMPILATION_BUILD") in ["1", "true"], do: :release, else: :debug
+   @version "0.4.0"
+ 
    def project do
-@@ -7,7 +8,8 @@ defmodule Lux.MixProject do
-       version: "0.1.0",
-       elixir: "~> 1.14",
-       start_permanent: Mix.env() == :prod,
--      deps: deps()
-+      deps: deps(),
+@@ -15,7 +16,8 @@ defmodule Lux.MixProject do
+         "coveralls.post": :test,
+         "coveralls.html": :test
+       ],
+-      description: "Lux is a powerful language-agnostic framework for building intelligent, adaptive, and collaborative multi-agent systems."
++      description: "Lux is a powerful language-agnostic framework for building intelligent, adaptive, and collaborative multi-agent systems.",
 +      compilers: [:rustler] ++ Mix.compilers()
      ]
    end
  
-@@ -21,7 +23,8 @@ defmodule Lux.MixProject do
-   # Run "mix help deps" to learn about dependencies.
-   defp deps do
-     [
--      # {:dep_from_hexpm, "~> 0.3.0"},
-+      {:rustler, "~> 0.30.0", runtime: false},
+@@ -50,7 +52,9 @@ defmodule Lux.MixProject do
+       {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+       {:excoveralls, "~> 0.18", only: :test},
+       {:mimic, "~> 1.7", only: :test},
+-      {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false}
++      {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},
++      {:rustler, "~> 0.32.0", optional: true},
 +      {:rustler_precompiled, "~> 0.7"}
-       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
      ]
    end
+ 
 --- /dev/null
 +++ b/lux/lib/lux/rust.ex
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,77 @@
 +defmodule Lux.Rust do
 +  @moduledoc """
 +  Core Rust integration module for Lux.
 +
-+  Provides FFI bindings to Rust NIFs for high-performance operations.
++  Provides NIF-based access to high-performance Rust functions with
++  safe type conversion and error handling between Elixir and Rust.
++
++  ## Examples
++
++      iex> Lux.Rust.add(1, 2)
++      3
++
++      iex> Lux.Rust.reverse("hello")
++      "olleh"
++
 +  """
 +
 +  alias Lux.Rust.Native
 +
 +  @doc """
-+  Adds two integers using Rust.
++  Adds two integers using Rust's native performance.
 +
 +  ## Examples
 +
-+      iex> Lux.Rust.add(1, 2)
-+  3
-+
++      iex> Lux.Rust.add(10, 20)
++      30
 +  """
 +  @spec add(integer(), integer()) :: integer()
-+  def add(a, b) do
++  def add(a, b) when is_integer(a) and is_integer(b) do
 +    Native.add(a, b)
 +  end
 +
 +  @doc """
-+  Converts an Elixir string to uppercase using Rust.
++  Reverses a string using Rust's string manipulation.
 +
 +  ## Examples
 +
-+      iex> Lux.Rust.to_uppercase("hello")
-+  "HELLO"
-+
++      iex> Lux.Rust.reverse("hello")
++      "olleh"
 +  """
-+  @spec to_uppercase(String.t()) :: String.t()
-+  def to_uppercase(str) do
-+    Native.to_uppercase(str)
++  @spec reverse(String.t()) :: String.t()
++  def reverse(string) when is_binary(string) do
++    Native.reverse(string)
 +  end
 +
 +  @doc """
-+  Computes the length of a list using Rust.
++  Calculates the nth Fibonacci number using Rust.
 +
 +  ## Examples
 +
-+      iex> Lux.Rust.list_length([1, 2, 3])
-+  3
-+
++      iex> Lux.Rust.fibonacci(10)
++      55
 +  """
-+  @spec list_length(list()) :: non_neg_integer()
-+  def list_length(list) do
-+    Native.list_length(list)
++  @spec fibonacci(non_neg_integer()) :: non_neg_integer()
++  def fibonacci(n) when is_integer(n) and n >= 0 do
++    Native.fibonacci(n)
 +  end
 +
 +  @doc """
-+  Converts a map to a JSON string using Rust.
++  Processes a list of numbers through Rust for high-performance computation.
 +
 +  ## Examples
 +
-+      iex> Lux.Rust.map_to_json(%{"key" => "value"})
-+  ~s({"key":"value"})
-+
++      iex> Lux.Rust.sum_list([1, 2, 3, 4, 5])
++      15
 +  """
-+  @spec map_to_json(map()) :: String.t()
-+  def map_to_json(map) do
-+    Native.map_to_json(map)
++  @spec sum_list([number()]) :: number()
++  def sum_list(list) when is_list(list) do
++    Native.sum_list(list)
 +  end
 +
 +  @doc """
-+  Parses a JSON string to a map using Rust.
-+
-+  ## Examples
-+
-+      iex> Lux.Rust.json_to_map(~s({"key":"value"}))
-+  %{"key" => "value"}
-+
++  Returns version information for the Rust NIF.
 +  """
-+  @spec json_to_map(String.t()) :: {:ok, map()} | {:error, String.t()}
-+  def json_to_map(json) do
-+    case Native.json_to_map(json) do
-+      {:ok, map} -> {:ok, map}
-+      {:error, reason} -> {:error, reason}
-+      other -> other
-+    end
-+  end
++  @spec nif_version() :: String.t()
++  def nif_version, do: Native.nif_version()
 +end
 --- /dev/null
 +++ b/lux/lib/lux/rust/native.ex
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,38 @@
 +defmodule Lux.Rust.Native do
 +  @moduledoc """
-+  NIF bindings for the Rust core.
++  Low-level NIF bindings to the Rust core.
 +
-+  This module uses Rustler to load the native implementation.
++  This module is automatically generated by Rustler and provides
++  the direct interface to Rust functions. Use `Lux.Rust` instead
++  for a safer, higher-level API.
 +  """
 +
-+  use Rustler,
++  version = Mix.Project.config()[:version]
++
++  use RustlerPrecompiled,
 +    otp_app: :lux,
 +    crate: "lux_rust",
-+    base_metadata: "lux_rust"
++    base_url: "https://github.com/Spectral-Finance/lux/releases/download/v#{version}",
++    force_build: System.get_env("LUX_BUILD_RUST") in ["1", "true"],
++    targets: [
++      "aarch64-apple-darwin",
++      "aarch64-unknown-linux-gnu",
++      "x86_64-apple-darwin",
++      "x86_64-pc-windows-gnu",
++      "x86_64-pc-windows-msvc",
++      "x86_64-unknown-linux-gnu",
++      "x86_64-unknown-linux-musl"
++    ],
++    nif_versions: ["2.16", "2.15"],
++    version: version
 +
-+  # NIF functions are defined here with their signatures
++  # NIF function declarations
 +  def add(_a, _b), do: :erlang.nif_error(:nif_not_loaded)
 +
-+  def to_uppercase(_str), do: :erlang.nif_error(:nif_not_loaded)
++  def reverse(_string), do: :erlang.nif_error(:nif_not_loaded)
 +
-+  def list_length(_list), do: :erlang.nif_error(:nif_not_loaded)
++  def fibonacci(_n), do: :erlang.nif_error(:nif_not_loaded)
 +
-+  def map_to_json(_map), do: :erlang.nif_error(:nif_not_loaded)
++  def sum_list(_list), do: :erlang.nif_error(:nif_not_loaded)
 +
-+  def json_to_map(_json), do: :erlang.nif_error(:nif_not_loaded)
-+
-+  def echo(_term), do: :erlang.nif_error(:nif_not_loaded)
++  def nif_version(), do: :erlang.nif_error(:nif_not_loaded)
 +end
 --- /dev/null
 +++ b/lux/lib/lux/rust/error.ex
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,47 @@
 +defmodule Lux.Rust.Error do
 +  @moduledoc """
 +  Error handling for Rust NIF operations.
 +
-+  Provides structured error types for FFI boundary failures.
++  Defines structured errors that can be raised when Rust operations fail,
++  providing clear context for debugging and recovery.
 +  """
 +
-+  defexception [:message, :type, :source]
++  defexception [:message, :type, :context]
 +
 +  @type t :: %__MODULE__{
 +          message: String.t(),
 +          type: atom(),
-+          source: term() | nil
++          context: map()
 +        }
 +
 +  @doc """
-+  Creates a new Rust error.
-+  """
-+  @spec new(String.t(), atom(), term() | nil) :: t()
-+  def new(message, type \\ :unknown, source \\ nil) do
-+    %__MODULE__{
-+      message: message,
-+      type: type,
-+      source: source
-+    }
-+  end
-+
-+  @doc """
-+  Converts a Rust error to a string representation.
-+  """
-+  @spec to_string(t()) :: String.t()
-+  def to_string(%__MODULE__{} = error) do
-+    "Rust Error [#{error.type}]: #{error.message}"
-+  end
-+
-+  defimpl String.Chars do
-+    def to_string(error) do
-+      Lux.Rust.Error.to_string(error)
-+    end
-+  end
-+end
---- /dev/null
-+++ b/lux/lib/lux/rust/type_conversion.ex
-@@ -0,0 +1,85 @@
-+defmodule Lux.Rust.TypeConversion do
-+  @moduledoc """
-+  Type conversion utilities between Elixir and Rust types.
-+
-+  Handles safe conversion of primitive types across the FFI boundary.
-+  """
-+
-+  @doc """
-+  Converts an Elixir term to a Rust-compatible representation.
++  Creates a new Rust error with the given parameters.
 +
 +  ## Examples
 +
-+
++      iex> Lux.Rust.Error
