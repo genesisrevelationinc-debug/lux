@@ -42,45 +42,52 @@ defmodule Lux.MixProject do
       mod: {Lux.Application, []},
       extra_applications: extra_applications(Mix.env())
     ]
+      {:req, "~> 0.5"},
+      {:nimble_options, "~> 1.1"},
+      {:ex_doc, "~> 0.31", only: :dev, runtime: false},
+      {:mox, "~> 1.0", only: :test},
+      {:rustler, "~> 0.34.0", runtime: false},
+      {:rustler_precompiled, "~> 0.7"}
+    ]
   end
 
-  defp extra_applications(:dev), do: [:logger, :crypto, :wx, :observer, :runtime_tools]
-  defp extra_applications(_), do: [:logger, :crypto]
-
-  defp elixirc_paths(:test), do: ["lib", "test/"]
-  defp elixirc_paths(_), do: ["lib"]
 
   defp aliases do
     [
       "test.unit": "test --include unit",
-      "test.integration": "test --include integration",
-      coveralls: "coveralls",
-      "coveralls.detail": "coveralls.detail",
-      "coveralls.post": "coveralls.post",
-      "coveralls.html": "coveralls.html",
-      "coveralls.github": "coveralls.github"
-    ]
+        "README.md",
+        "lux/guides/getting_started.md",
+        "lux/guides/core_concepts.md",
+        "lux/guides/language_support.md",
+        "lux/guides/rust_integration.md"
+      ],
+      groups_for_extras: [
+        "Getting Started": [
   end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
-    [
-      {:bandit, "~> 1.0"},
-      {:req, "~> 0.5.0"},
-      {:venomous, "~> 0.7.5"},
-      {:crontab, "~> 1.1"},
-      {:ex_json_schema, "~> 0.10.2"},
+          "lux/guides/agents.livemd",
+          "lux/guides/signals.livemd",
+          "lux/guides/prisms.livemd"
+        ],
+        "Language Integration": [
+          "lux/guides/rust_integration.md"
+        ]
+      ],
+      groups_for_modules: [
       {:nodejs, "~> 3.1"},
       {:ethers, "~> 0.6.4"},
       {:ex_secp256k1, "~> 0.7.4"},
       {:yaml_elixir, "~> 2.9"},
-      {:hammer, "~> 7.0", only: [:test]},
-      # test and dev dependencies
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4.5", only: :dev, runtime: false},
-      {:dotenvy, "~> 1.1.0", only: [:dev, :test]},
-      {:mock, "~> 0.3.0", only: [:test]},
+          Lux.Beam,
+          Lux.Lens,
+          Lux.Signal,
+          Lux.Signal.Router,
+          Lux.Rust
+        ],
+        "Schema & Validation": [
+          Lux.Schema
       {:stream_data, "~> 1.0", only: [:test]},
       {:styler, "~> 1.3", only: [:dev, :test], runtime: false},
       {:excoveralls, "~> 0.18", only: :test}
