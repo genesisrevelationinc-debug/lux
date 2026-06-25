@@ -4,64 +4,66 @@ defmodule Lux.LLM.Provider do
   Defines the contract that all LLM providers must implement.
   """
 
-  alias Lux.LLM.Config
-
   @type model :: String.t()
   @type prompt :: String.t() | list()
   @type options :: keyword()
-  @type response :: %{content: String.t(), metadata: map()}
-  @type error :: {:error, term()}
+  @type response :: {:ok, map()} | {:error, term()}
+  @type stream_callback :: (String.t() -> any())
 
-  @callback available_models() :: [model()]
-  @callback chat_completion(prompt(), options()) :: {:ok, response()} | error()
-  @callback stream_completion(prompt(), options(), callback :: function()) :: :ok | error()
-  @callback count_tokens(prompt(), model()) :: non_neg_integer()
-  @callback supports_model?(model()) :: boolean()
-  @callback default_config() :: keyword()
-
-  @doc """
-  Returns the list of available providers.
-  """
-  def available_providers do
-    Lux.LLM.Registry.list_providers()
-  end
+  @callback chat_completion(prompt(), model(), options()) :: response()
+  @callback stream_completion(prompt(), model(), stream_callback(), options()) :: response()
+  @callback list_models() :: {:ok, list(model())} | {:error, term()}
+  @callback get_model_info(model()) :: {:ok, map()} | {:error, term()}
+  @callback count_tokens(prompt(), model()) :: {:ok, non_neg_integer()} | {:error, term()}
+  @callback validate_config() :: :ok | {:error, term()}
 
   @doc """
-  Gets a provider module by name.
+  Returns the default model for this provider.
   """
-  def get_provider(name) when is_atom(name) do
-    Lux.LLM.Registry.get(name)
-  end
+  @callback default_model() :: model()
 
   @doc """
-  Executes a chat completion with automatic provider selection.
+  Returns the provider name.
   """
-  def chat(prompt, opts \\ []) do
-    provider = select_provider(opts)
-    provider.chat_completion(prompt, opts)
-  end
+  @callback name() :: String.t()
 
   @doc """
-  Streams a chat completion with automatic provider selection.
+  Returns the provider's capabilities.
   """
-  def stream(prompt, opts \\ [], callback) do
-    provider = select_provider(opts)
-    provider.stream_completion(prompt, opts, callback)
-  end
+  @callback capabilities() :: list(atom())
 
-  defp select_provider(opts) do
-    model = opts[:model]
-    preferred = opts[:provider]
+  defmacro __using__(_opts) do
+    quote do
+      @behaviour Lux.LLM.Provider
 
-    cond do
-      preferred && provider = Lux.LLM.Registry.get(preferred) ->
-        provider
+      def stream_completion(prompt, model, callback, options) do
+        # Default implementation: simulate streaming by chunking the response
+        case chat_completion(prompt, model, options) do
+          {:ok, %{content: content} = response} ->
+            # Stream the content in chunks
+            chunk_size = 10
+            content
+            |> String.graphemes()
+            |> Enum.chunk_every(chunk_size)
+            |> Enum.each(fn chunk ->
+              callback.(Enum.join(chunk))
+            end)
+            {:ok, response}
 
-      model && provider = Lux.LLM.Registry.find_by_model(model) ->
-        provider
+          {:error, _} = error ->
+            error
+        end
+      end
 
-      true ->
-        Lux.LLM.Selector.select_provider(opts)
+      def validate_config do
+        :ok
+      end
+
+      def default_model do
+        "default"
+      end
+
+      defoverridable stream_completion: 4, validate_config: 0, default_model: 0
     end
   end
 end
