@@ -1,10 +1,10 @@
  ```diff
 --- /dev/null
 +++ b/lux/lib/lux/llm/perplexity.ex
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,268 @@
 +defmodule Lux.LLM.Perplexity do
 +  @moduledoc """
-+  Perplexity AI API integration for Lux.
++  Perplexity AI integration for Lux.
 +
 +  Provides access to Perplexity's language models with support for:
 +  - Streaming and non-streaming responses
@@ -14,9 +14,9 @@
 +
 +  ## Configuration
 +
-+  Configure the Perplexity client in your application config:
++  Configure the Perplexity client in your config:
 +
-+      config :lux, Lux.LLM.Perplexity,
++      config :lux, :perplexity,
 +        api_key: System.get_env("PERPLEXITY_API_KEY"),
 +        default_model: "sonar",
 +        base_url: "https://api.perplexity.ai"
@@ -25,7 +25,7 @@
 +
 +      iex> alias Lux.LLM.Perplexity
 +      iex> Perplexity.chat_completion([%{role: "user", content: "Hello!"}])
-+      {:ok, %{choices: [%{message: %{content: "Hello!"}}]}}
++      {:ok, %Lux.LLM.Perplexity.Response{}}
 +
 +  """
 +
@@ -47,7 +47,7 @@
 +          content: String.t()
 +        }
 +
-+  @type chat_completion_opts :: %{
++  @type chat_opts :: %{
 +          optional(:model) => String.t(),
 +          optional(:temperature) => float(),
 +          optional(:max_tokens) => integer(),
@@ -58,123 +58,112 @@
 +        }
 +
 +  @doc """
-+  Returns the list of valid Perplexity models.
++  Returns the list of available Perplexity models.
 +  """
-+  @spec valid_models() :: [String.t()]
-+  def valid_models, do: @valid_models
++  @spec available_models() :: [String.t()]
++  def available_models, do: @valid_models
 +
 +  @doc """
-+  Sends a chat completion request to the Perplexity API.
++  Sends a chat completion request to Perplexity AI.
++
++Chat completion request to Perplexity AI.
 +
 +  ## Options
 +
-+  - `:model` - The model to use (default: "sonar")
-+  - `:temperature` - Sampling temperature (default: 0.7)
-+  - `:max_tokens` - Maximum tokens in response (default: 1024)
-+  - `:top_p` - Nucleus sampling parameter (default: 0.9)
-+  - `:stream` - Whether to stream the response (default: false)
-+  - `:presence_penalty` - Presence penalty (default: 0.0)
-+  - `:frequency_penalty` - Frequency penalty (default: 0.0)
++  - `:model` - Model to use (default: "sonar")
++  - `:temperature` - Sampling temperature (0.0 to 2.0)
++  - `:max_tokens` - Maximum tokens to generate
++  - `:top_p` - Nucleus sampling parameter
++  - `:stream` - Enable streaming (default: false)
++  - `:presence_penalty` - Presence penalty (-2.0 to 2.0)
++  - `:frequency_penalty` - Frequency penalty (-2.0 to 2.0)
 +
 +  ## Examples
 +
 +      iex> Perplexity.chat_completion([%{role: "user", content: "What is Elixir?"}])
-+      {:ok, %{choices: [%{message: %{content: "Elixir is a functional programming language..."}}]}}
++      {:ok, %Lux.LLM.Perplexity.Response{}}
 +
 +  """
-+  @spec chat_completion([message()], chat_completion_opts()) ::
-+          {:ok, map()} | {:error, term()}
-+  def chat_completion(messages, opts \\ %{}) do
-+    model = Map.get(opts, :model, default_model())
-+    stream = Map.get(opts, :stream, false)
++  @spec chat_completion([message()], keyword()) ::
++          {:ok, Lux.LLM.Perplexity.Response.t()} | {:error, term()}
++  def chat_completion(messages, opts \\ []) do
++    config = get_config()
++    model = Keyword.get(opts, :model, config[:default_model] || @default_model)
 +
 +    unless model in @valid_models do
-+      return_error(:invalid_model, "Invalid model: #{model}. Valid models: #{Enum.join(@valid_models, ", ")}")
++      return_error(:invalid_model, "Invalid model: #{model}")
 +    end
 +
-+    body =
-+      %{
-+        model: model,
-+        messages: messages,
-+        stream: stream
-+      }
-+      |> add_optional_params(opts)
++    body = build_request_body(messages, model, opts)
 +
-+    if stream do
-+      stream_chat_completion(body, opts)
++    if Keyword.get(opts, :stream, false) do
++      stream_chat_completion(body, config, opts)
 +    else
-+      do_chat_completion(body, opts)
++      do_chat_completion(body, config, opts)
 +    end
 +  end
 +
 +  @doc """
-+  Streams a chat completion response from the Perplexity API.
++  Streams a chat completion response from Perplexity AI.
 +
-+  Returns a stream of response chunks that can be consumed with `Enum` or `Stream`.
++  The callback function receives chunks of the response as they arrive.
 +
 +  ## Examples
 +
-+      iex> Perplexity.stream_chat_completion([%{role: "user", content: "Tell me a story"}])
-+      iex> |> Enum.to_list()
-+      [%{choices: [%{delta: %{content: "Once"}}]}, ...]
++      iex> Perplexity.stream_chat_completion([%{role: "user", content: "Hello!"}], fn chunk ->
++      ...>   IO.puts(chunk.content)
++      ...> end)
++      {:ok, %Lux.LLM.Perplexity.Response{}}
 +
 +  """
-+  @spec stream_chat_completion([message()], chat_completion_opts()) ::
-+          Enumerable.t() | {:error, term()}
-+  def stream_chat_completion(messages, opts \\ %{}) do
-+    opts = Map.put(opts, :stream, true)
-+    chat_completion(messages, opts)
++  @spec stream_chat_completion([message()], (term() -> term()), keyword()) ::
++          {:ok, Lux.LLM.Perplexity.Response.t()} | {:error, term()}
++  def stream_chat_completion(messages, callback \\ nil, opts \\ [])
++
++  def stream_chat_completion(messages, callback, opts) when is_function(callback, 1) do
++    config = get_config()
++    model = Keyword.get(opts, :model, config[:default_model] || @default_model)
++    body = build_request_body(messages, model, Keyword.put(opts, :stream, true))
++
++    do_stream_chat_completion(body, config, callback, opts)
++  end
++
++  def stream_chat_completion(messages, opts, []) when is_list(opts) do
++    # Handle case where opts is passed as third arg
++    stream_chat_completion(messages, nil, opts)
++  end
++
++  def stream_chat_completion(messages, nil, opts) do
++    config = get_config()
++    model = Keyword.get(opts, :model, config[:default_model] || @default_model)
++    body = build_request_body(messages, model, Keyword.put(opts, :stream, true))
++
++    do_stream_chat_completion(body, config, nil, opts)
 +  end
 +
 +  # Private functions
 +
-+  defp do_chat_completion(body, opts) do
-+    url = "#{base_url()}/chat/completions"
-+
-+    headers = [
-+      {"Authorization", "Bearer #{api_key()}"},
-+      {"Content-Type", "application/json"}
-+    ]
-+
-+    case HTTPoison.post(url, Jason.encode!(body), headers, recv_timeout: 60_000) do
-+      {:ok, %{status_code: 200, body: response_body}} ->
-+        case Jason.decode(response_body) do
-+          {:ok, response} ->
-+            track_cost(response, opts)
-+            {:ok, response}
-+
-+          {:error, reason} ->
-+            return_error(:json_decode_error, "Failed to decode response: #{inspect(reason)}")
-+        end
-+
-+      {:ok, %{status_code: status_code, body: response_body}} ->
-+        handle_http_error(status_code, response_body)
-+
-+      {:error, %{reason: reason}} ->
-+        return_error(:request_failed, "HTTP request failed: #{inspect(reason)}")
-+    end
++  defp get_config do
++    Application.get_env(:lux, :perplexity, [])
++    |> Keyword.put_new(:base_url, @default_base_url)
++    |> Keyword.put_new(:default_model, @default_model)
 +  end
 +
-+  defp stream_chat_completion(body, opts) do
-+    url = "#{base_url()}/chat/completions"
++  defp build_request_body(messages, model, opts) do
++    %{
++      model: model,
++      messages: messages
++    }
++    |> maybe_put(:temperature, Keyword.get(opts, :temperature))
++    |> maybe_put(:max_tokens, Keyword.get(opts, :max_tokens))
++    |> maybe_put(:top_p, Keyword.get(opts, :top_p))
++    |> maybe_put(:stream, Keyword.get(opts, :stream, false))
++    |> maybe_put(:presence_penalty, Keyword.get(opts, :presence_penalty))
++    |> maybe_put(:frequency_penalty, Keyword.get(opts, :frequency_penalty))
++  end
 +
-+    headers = [
-+      {"Authorization", "Bearer #{api_key()}"},
-+      {"Content-Type", "application/json"},
-+      {"Accept", "text/event-stream"}
-+    ]
++  defp maybe_put(map, _key, nil), do: map
++  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 +
-+    Stream.resource(
-+      fn ->
-+        case HTTPoison.post(url, Jason.encode!(body), headers,
-+               stream_to: self(),
-+               async: :once,
-+               recv_timeout: 60_000
-+             ) do
-+          {:ok, %HTTPoison.AsyncResponse{id: id}} -> id
-+          {:error, reason} -> throw({:error, reason})
-+        end
-+      end,
-+      fn id ->
-+        receive do
-+          %HTTPo
++  defp do_chat_completion(body, config, opts) do
++    api_key = get_api
