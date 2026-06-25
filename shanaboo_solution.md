@@ -1,164 +1,168 @@
- ```diff
---- a/lux/lib/lux/llm/open_router.ex
-+++ b/lux/llm/open_router.ex
+ Looking at this issue, I need to implement an OpenRouter integration for the Lux framework. This is an Elixir project based on the file structure. Let me analyze what's needed:
+
+1. OpenRouter API client
+2. Multiple model support
+3. Unified interface matching other providers
+4. Error handling and retries
+5. Cost tracking
+
+Since this is an Elixir project with a `lux` directory, I'll need to create the OpenRouter integration files. Let me infer the structure from typical Elixir projects and the issue requirements.
+
+Based on the repo structure, the main code is likely in `lux/lib/` and tests in `lux/test/`. I'll create:
+
+1. `lux/lib/lux/llm/providers/open_router.ex` - Main OpenRouter client
+2. `lux/lib/lux/llm/providers/open_router/client.ex` - HTTP client
+3. `lux/lib/lux/llm/providers/open_router/models.ex` - Model definitions
+4. `lux/lib/lux/llm/providers/open_router/cost_tracker.ex` - Cost tracking
+5. `lux/test/lux/llm/providers/open_router_test.exs` - Tests
+
+Let me create these files:
+
+```diff
+--- /dev/null
++++ b/lux/lib/lux/llm/providers/open_router.ex
 @@ -0,0 +1,218 @@
-+defmodule Lux.LLM.OpenRouter do
++defmodule Lux.LLM.Providers.OpenRouter do
 +  @moduledoc """
-+  OpenRouter API client providing unified access to multiple LLM models.
-+  
-+  OpenRouter (https://openrouter.ai) provides a unified API for accessing
-+  models from OpenAI, Anthropic, Google, Meta, and many other providers.
++  OpenRouter integration for Lux, providing access to a wide range of LLM models
++  through a single unified API.
++
++  ## Configuration
++
++  Configure OpenRouter in your application config:
++
++      config :lux, Lux.LLM.Providers.OpenRouter,
++        api_key: System.get_env("OPENROUTER_API_KEY"),
++        default_model: "anthropic/claude-3.5-sonnet",
++        site_url: "https://your-site.com",
++        site_name: "Your App"
++
++  ## Usage
++
++      alias Lux.LLM.Providers.OpenRouter
++
++      # Simple chat completion
++      {:ok, response} = OpenRouter.chat([
++        %{role: "user", content: "Hello!"}
++      ])
++
++      # With specific model
++      {:ok, response} = OpenRouter.chat([
++        %{role: "user", content: "Hello!"}
++      ], model: "openai/gpt-4o")
++
++      # With streaming
++      {:ok, stream} = OpenRouter.chat([
++        %{role: "user", content: "Tell me a story"}
++      ], stream: true, stream_to: self())
 +  """
-+  
-+  alias Lux.LLM.OpenRouter.Config
-+  alias Lux.LLM.OpenRouter.RateLimiter
-+  alias Lux.LLM.OpenRouter.CostTracker
-+  
-+  require Logger
-+  
-+  @default_endpoint "https://openrouter.ai/api/v1/chat/completions"
-+  @default_model "openrouter/auto"
-+  
-+  @type message :: %{role: String.t(), content: String.t()}
-+  @type completion_opts :: [
-+    model: String.t(),
-+    temperature: float(),
-+    max_tokens: integer(),
-+    top_p: float(),
-+    stream: boolean(),
-+    tools: list(),
-+    tool_choice: map() | String.t(),
-+    response_format: map()
-+  ]
-+  
++
++  alias Lux.LLM.Providers.OpenRouter.{Client, CostTracker, Models}
++
++  @default_timeout 60_000
++  @default_max_retries 3
++
++  @type message :: %{
++          role: String.t(),
++          content: String.t(),
++          optional(:name) => String.t()
++        }
++
++  @type chat_options :: [
++          model: String.t(),
++          temperature: float(),
++          max_tokens: integer(),
++          top_p: float(),
++          stream: boolean(),
++          stream_to: pid() | atom(),
++          tools: list(),
++          tool_choice: map() | String.t(),
++          timeout: integer(),
++          max_retries: integer()
++        ]
++
++  @type chat_response :: %{
++          id: String.t(),
++          model: String.t(),
++          content: String.t(),
++          usage: map(),
++          finish_reason: String.t(),
++          created_at: DateTime.t()
++        }
++
 +  @doc """
-+  Creates a chat completion using the OpenRouter API.
-+  
++  Sends a chat completion request to OpenRouter.
++
 +  ## Options
-+  
-+    * `:model` - The model to use (defaults to "openrouter/auto")
-+    * `:temperature` - Sampling temperature (0.0 to 2.0)
-+    * `:max_tokens` - Maximum tokens to generate
-+    * `:top_p` - Nucleus sampling parameter
-+    * `:stream` - Whether to stream the response
-+    * `:tools` - List of available tools/functions
-+    * `:tool_choice` - Tool selection strategy
-+    * `:response_format` - Expected response format
-+  
-+  ## Examples
-+  
-+      iex> OpenRouter.chat_completion([
-+      ...>   %{role: "user", content: "Hello!"}
-+      ...> ], model: "anthropic/claude-3.5-sonnet")
-+      {:ok, %{choices: [%{message: %{content: "Hello!"}}]}}
++
++  - `:model` - Model identifier (default from config or "anthropic/claude-3.5-sonnet")
++  - `:temperature` - Sampling temperature (0.0 to 2.0, default: 0.7)
++  - `:max_tokens` - Maximum tokens to generate
++  - `:top_p` - Nucleus sampling parameter
++  - `:stream` - Enable streaming (default: false)
++  - `:stream_to` - PID or process/multicast name to send stream events to
++  - `:tools` - List of tool definitions for function calling
++  - `:tool_choice` - Tool choice strategy
++  - `:timeout` - Request timeout in milliseconds
++  - `:max_retries` - Maximum retry attempts
 +  """
-+  @spec chat_completion(list(message()), keyword()) ::
-+          {:ok, map()} | {:error, term()}
-+  def chat_completion(messages, opts \\ []) do
-+    config = Config.load()
-+    model = Keyword.get(opts, :model, config.default_model || @default_model)
-+    
-+    with :ok <- RateLimiter.check_limit(model),
-+         {:ok, response} <- do_request(messages, opts, config) do
-+      CostTracker.track(response, model)
-+      {:ok, response}
++  @spec chat(list(message()), chat_options()) ::
++          {:ok, chat_response()} | {:ok, Enumerable.t()} | {:error, term()}
++  def chat(messages, opts \\ []) do
++    model = Keyword.get(opts, :model, default_model())
++    stream = Keyword.get(opts, :stream, false)
++
++    body = build_request_body(messages, model, opts)
++
++    if stream do
++      stream_chat(body, opts)
++    else
++      do_chat(body, opts)
 +    end
 +  end
-+  
++
 +  @doc """
-+  Creates a streaming chat completion.
-+  
-+  Returns a stream of completion chunks.
-+  """
-+  @spec stream_chat_completion(list(message()), keyword()) ::
-+          Enumerable.t() | {:error, term()}
-+  def stream_chat_completion(messages, opts \\ []) do
-+    config = Config.load()
-+    opts = Keyword.put(opts, :stream, true)
-+    
-+    with :ok <- RateLimiter.check_limit(Keyword.get(opts, :model, @default_model)) do
-+      do_stream_request(messages, opts, config)
-+    end
-+  end
-+  
-+  @doc """
-+  Lists available models from OpenRouter.
++  Returns a list of available models from OpenRouter.
 +  """
 +  @spec list_models() :: {:ok, list(map())} | {:error, term()}
 +  def list_models do
-+    config = Config.load()
-+    
-+    headers = [
-+      {"Authorization", "Bearer #{config.api_key}"},
-+      {"HTTP-Referer", config.http_referer || "https://github.com/Spectral-Finance/lux"},
-+      {"X-Title", config.app_title || "Lux"}
-+    ]
-+    
-+    case Req.get("https://openrouter.ai/api/v1/models", headers: headers) do
-+      {:ok, %{status: 200, body: %{"data" => models}}} ->
-+        {:ok, models}
-+        
-+      {:ok, %{status: status, body: body}} ->
-+        Logger.error("OpenRouter list_models failed: HTTP #{status}, #{inspect(body)}")
-+        {:error, {:http_error, status, body}}
-+        
-+      {:error, reason} ->
-+        Logger.error("OpenRouter list_models request failed: #{inspect(reason)}")
-+        {:error, reason}
++    case Client.request(:get, "/models") do
++      {:ok, %{"data" => models}} -> {:ok, Enum.map(models, &Models.normalize/1)}
++      {:error, reason} -> {:error, reason}
 +    end
 +  end
-+  
-+  ## Private Functions
-+  
-+  defp do_request(messages, opts, config) do
-+    body = build_request_body(messages, opts, config)
-+    headers = build_headers(config)
-+    
-+    case Req.post(config.endpoint || @default_endpoint, headers: headers, json: body) do
-+      {:ok, %{status: 200, body: response_body}} ->
-+        {:ok, response_body}
-+        
-+      {:ok, %{status: status, body: body}} ->
-+        Logger.error("OpenRouter request failed: HTTP #{status}, #{inspect(body)}")
-+        {:error, {:http_error, status, body}}
-+        
-+      {:error, reason} ->
-+        Logger.error("OpenRouter request failed: #{inspect(reason)}")
-+        {:error, reason}
-+    end
-+  end
-+  
-+  defp do_stream_request(messages, opts, config) do
-+    body = build_request_body(messages, opts, config)
-+    headers = build_headers(config)
-+    
-+    Req.post!(config.endpoint || @default_endpoint,
-+      headers: headers,
-+      json: body,
-+      into: :self
-+    )
-+    |> case do
-+      %{status: 200, body: stream} ->
-+        stream
-+        |> Stream.transform("", fn chunk, acc ->
-+          data = acc <> chunk
-+          {lines, rest} = extract_lines(data)
-+          {Enum.map(lines, &parse_sse_line/1), rest}
-+        end)
-+        
-+      %{status: status, body: body} ->
-+        Logger.error("OpenRouter stream failed: HTTP #{status}, #{inspect(body)}")
-+        {:error, {:http_error, status, body}}
-+    end
-+  end
-+  
-+  defp build_request_body(messages, opts, _config) do
-+    %{
-+      model: Keyword.get(opts, :model, @default_model),
-+      messages: messages,
-+      temperature: Keyword.get(opts, :temperature, 0.7),
-+      max_tokens: Keyword.get(opts, :max_tokens, 4096),
-+      top_p: Keyword.get(opts, :top_p, 1.0),
-+      stream: Keyword.get(opts, :stream, false)
-+    }
 +
++  @doc """
++  Returns model information for a specific model.
++  """
++  @spec get_model(String.t()) :: {:ok, map()} | {:error, term()}
++  def get_model(model_id) do
++    case Client.request(:get, "/models/#{URI.encode_www_form(model_id)}") do
++      {:ok, model} -> {:ok, Models.normalize(model)}
++      {:error, reason} -> {:error, reason}
++    end
++  end
++
++  @doc """
++  Returns the current credit balance and usage statistics.
++  """
++  @spec get_credits() :: {:ok, map()} | {:error, term()}
++  def get_credits do
++    Client.request(:get, "/credits")
++  end
++
++  # Private functions
++
++  defp do_chat(body, opts) do
++    timeout = Keyword.get(opts, :timeout, @default_timeout)
++    max_retries = Keyword.get(opts, :max_retries, @default_max_retries)
++
++    case Client.request(:post, "/chat/completions", body, timeout: timeout, max_retries: max_retries) do
++      {:ok, response} ->
++        response = parse_response(response)
++        CostTracker.track(response)
++        {:ok, response}
++
++      {:error, reason} ->
++        {:error, reason}
++   
