@@ -1,183 +1,167 @@
  ```diff
 --- /dev/null
-+++ b/lux/lib/lux/llm.ex
-@@ -0,0 +1,230 @@
-+defmodule Lux.LLM do
++++ b/lux/lib/lux/llm/provider.ex
+@@ -0,0 +1,95 @@
++defmodule Lux.LLM.Provider do
 +  @moduledoc """
-+  Universal LLM Provider Abstraction Layer for Lux.
-+
-+  Provides a unified interface for interacting with multiple LLM providers,
-+  with automatic model selection, smart fallback handling, cost tracking,
-+  and performance monitoring.
-+
-+  ## Configuration
-+
-+  Configure providers in your application config:
-+
-+      config :lux, :llm,
-+        default_provider: :openai,
-+        providers: [
-+          openai: [
-+            module: Lux.LLM.Providers.OpenAI,
-+            api_key: System.get_env("OPENAI_API_KEY"),
-+            default_model: "gpt-4",
-+            models: ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"]
-+          ],
-+          anthropic: [
-+            module: Lux.LLM.Providers.Anthropic,
-+            api_key: System.get_env("ANTHROPIC_API_KEY"),
-+            default_model: "claude-3-opus-20240229",
-+            models: ["claude-3-opus-20240229", "claude-3-sonnet-20240229"]
-+          ]
-+        ],
-+        fallback_strategy: :next_available, # :next_available, :cheapest, :fastest
-+        cache: [
-+          enabled: true,
- active: true,
-+          ttl: 300_000 # 5 minutes
-+        ],
-+        monitoring: [
-+          enabled: true,
-+          track_costs: true,
-+          track_latency: true
-+        ]
-+
-+  ## Usage
-+
-+      # Simple chat completion
-+      {:ok, response} = Lux.LLM.chat("Hello, how are you?")
-+
-+      # With options
-+      {:ok, response} = Lux.LLM.chat("Hello", provider: :anthropic, model: "claude-3-sonnet-20240229")
-+
-+      # Streaming
-+      {:ok, stream} = Lux.LLM.chat("Hello", stream: true)
-+
-+      # With structured output
-+      {:ok, response} = Lux.LLM.chat("Extract entities", schema: MySchema)
++  Universal provider interface for LLM providers.
++  Defines the contract that all LLM providers must implement.
 +  """
 +
-+  alias Lux.LLM.{Provider, ProviderRegistry, ModelSelector, FallbackHandler, CostTracker, PerformanceMonitor, Cache}
-+
-+  @type provider_name :: atom()
-+  @type model_name :: String.t()
-+  @type chat_message :: %{role: String.t(), content: String.t()}
-+  @type chat_options :: keyword()
-+  @type chat_response :: %{
++  @type model :: String.t()
++  @type message :: %{role: String.t(), content: String.t()}
++  @type completion_response :: %{
 +          content: String.t(),
-+          model: model_name(),
-+          provider: provider_name(),
++          model: String.t(),
++          provider: module(),
 +          usage: map(),
-+          latency_ms: integer(),
-+          cost: float()
++          latency_ms: integer()
 +        }
++  @type error_response :: %{error: String.t(), provider: module(), retryable: boolean()}
 +
-+  @doc """
-+  Sends a chat completion request to the configured LLM provider.
++  @callback available_models() :: [model()]
++  @callback chat_completion(messages :: [message()], opts :: keyword()) ::
++              {:ok, completion_response()} | {:error, error_response()}
++  @callback stream_completion(messages :: [message()], opts :: keyword()) ::
++              Enumerable.t()
++  @callback estimate_cost(model(), tokens :: integer()) :: float()
++  @callback validate_config() :: :ok | {:error, String.t()}
++end
 +
-+  ## Options
-+
-+  - `:provider` - Specific provider to use (defaults to configured default)
-+  - `:model` - Specific model to use (defaults to provider's default)
-+  - `:temperature` - Sampling temperature (0.0 to 2.0)
-+  - `:max_tokens` - Maximum tokens to generate
-+  - `:stream` - Whether to stream the response
-+  - `:schema` - Schema for structured output
-+  - `:fallback` - Whether to enable fallback (default: true)
-+  - `:cache` - Whether to use cache (default: true)
++defmodule Lux.LLM.Provider.Base do
++  @moduledoc """
++  Base implementation with common provider functionality.
 +  """
-+  @spec chat(String.t() | [chat_message()], chat_options()) ::
-+          {:ok, chat_response()} | {:ok, Enumerable.t()} | {:error, term()}
-+  def chat(messages, opts \\ []) when is_binary(messages) do
-+    chat([%{role: "user", content: messages}], opts)
++
++  defmacro __using__(opts) do
++    quote do
++      @behaviour Lux.LLM.Provider
++
++      @default_timeout unquote(opts[:timeout] || 30_000)
++      @max_retries unquote(opts[:max_retries] || 3)
++
++      def stream_completion(messages, opts) do
++        Lux.LLM.Provider.Base.default_stream_impl(__MODULE__, messages, opts)
++      end
++
++      def validate_config do
++        :ok
++      end
++
++      defoverridable stream_completion: 2, validate_config: 0
++    end
 +  end
 +
-+  def chat(messages, opts) when is_list(messages) do
++  def default_stream_impl(module, messages, opts) do
++    Stream.resource(
++      fn -> nil end,
++      fn _acc ->
++        case module.chat_completion(messages, opts) do
++          {:ok, response} -> {[response], :done}
++          {:error, error} -> {[error], :done}
++        end
++      end,
++      fn _ -> :ok end
++    )
++  end
++end
++--- /dev/null
++++ b/lux/lib/lux/llm/provider/openai.ex
+@@ -0,0 +1,95 @@
++defmodule Lux.LLM.Provider.OpenAI do
++  @moduledoc """
++  OpenAI provider implementation.
++  """
++
++  use Lux.LLM.Provider.Base, timeout: 60_000, max_retries: 3
++
++  alias Lux.LLM.Monitoring.Metrics
++
++  @api_base "https://api.openai.com/v1"
++  @models [
++    "gpt-4o",
++    "gpt-4o-mini",
++    "gpt-4-turbo",
++    "gpt-4",
++    "gpt-3.5-turbo"
++  ]
++
++  @model_pricing %{
++    "gpt-4o" => %{input: 5.0, output: 15.0},
++    "gpt-4o-mini" => %{input: 0.15, output: 0.60},
++    "gpt-4-turbo" => %{input: 10.0, output: 30.0},
++    "gpt-4" => %{input: 30.0, output: 60.0},
++    "gpt-3.5-turbo" => %{input: 0.50, output: 1.50}
++  }
++
++  @impl true
++  def available_models, do: @models
++
++  @impl true
++  def chat_completion(messages, opts) do
++    model = opts[:model] || "gpt-4o"
++    api_key = get_api_key()
++
 +    start_time = System.monotonic_time(:millisecond)
 +
-+    with {:ok, provider} <- select_provider(opts),
-+         {:ok, model} <- select_model(provider, opts),
-+         {:ok, cached} <- maybe_read_cache(messages, model, opts),
-+         {:ok, response} <- execute_with_fallback(provider, model, messages, opts),
-+         :ok <- maybe_cache_response(messages, model, response, opts) do
-+      track_metrics(response, start_time)
-+      {:ok, response}
-+    else
-+      {:cached, response} ->
-+        track_cache_hit()
-+        {:ok, response}
++    body = %{
++      model: model,
++      messages: messages,
++      max_tokens: opts[:max_tokens] || 4096,
++      temperature: opts[:temperature] || 0.7
++    }
++
++    headers = [
++      {"Authorization", "Bearer #{api_key}"},
++      {"Content-Type", "application/json"}
++    ]
++
++    case HTTPoison.post("#{@api_base}/chat/completions", Jason.encode!(body), headers, recv_timeout: 60_000) do
++      {:ok, %{status_code: 200, body: response_body}} ->
++        response = Jason.decode!(response_body)
++        latency = System.monotonic_time(:millisecond) - start_time
++
++        result = %{
++          content: get_in(response, ["choices", Access.at(0), "message", "content"]),
++          model: model,
++          provider: __MODULE__,
++          usage: response["usage"] || %{},
++          latency_ms: latency
++        }
++
++        Metrics.record_request(__MODULE__, model, latency, :success)
++        {:ok, result}
++
++      {:ok, %{status_code: status_code, body: body}} ->
++        latency = System.monotonic_time(:millisecond) - start_time
++        Metrics.record_request(__MODULE__, model, latency, :error)
++        {:error, %{error: "HTTP #{status_code}: #{body}", provider: __MODULE__, retryable: status_code in [429, 502, 503]}}
 +
 +      {:error, reason} ->
-+        track_error(reason)
-+        {:error, reason}
++        latency = System.monotonic_time(:millisecond) - start_time
++        Metrics.record_request(__MODULE__, model, latency, :error)
++        {:error, %{error: inspect(reason), provider: __MODULE__, retryable: true}}
 +    end
 +  end
 +
-+  @doc """
-+  Lists all available providers and their models.
++  @impl true
++  def estimate_cost(model, tokens) do
++    pricing = Map.get(@model_pricing, model, %{input: 0, output: 0})
++    # Cost per 1K tokens in USD
++    (pricing.input + pricing.output) * tokens / 1000 / 2
++  end
++
++  defp get_api_key do
++    System.get_env("OPENAI_API_KEY") ||
++      Application.get_env(:lux, :openai_api_key)
++  end
++end
++--- /dev/null
++++ b/lux/lib/lux/llm/provider/anthropic.ex
+@@ -0,0 +1,93 @@
++defmodule Lux.LLM.Provider.Anthropic do
++  @moduledoc """
++  Anthropic Claude provider implementation.
 +  """
-+  @spec list_providers() :: [Provider.t()]
-+  def list_providers do
-+    ProviderRegistry.list_providers()
-+  end
 +
-+  @doc """
-+  Gets information about a specific provider.
-+  """
-+  @spec get_provider(provider_name()) :: {:ok, Provider.t()} | {:error, :not_found}
-+  def get_provider(name) do
-+    ProviderRegistry.get_provider(name)
-+  end
-+
-+  @doc """
-+  Returns cost statistics for LLM usage.
-+  """
-+  @spec cost_stats() :: map()
-+  def cost_stats do
-+    CostTracker.get_stats()
-+  end
-+
-+  @doc """
-+  Returns performance metrics.
-+  """
-+  @spec performance_metrics() :: map()
-+  def performance_metrics do
-+    PerformanceMonitor.get_metrics()
-+  end
-+
-+  @doc """
-+  Clears the LLM cache.
-+  """
-+  @spec clear_cache() :: :ok
-+  def clear_cache do
-+    Cache.clear()
-+  end
-+
-+  # Private functions
-+
-+  defp select_provider(opts) do
-+    case Keyword.get(opts, :provider) do
-+      nil -> ProviderRegistry.get_default_provider()
-+      name -> ProviderRegistry.get_provider(name)
-+    end
-+  end
-+
-+  defp select_model(provider, opts) do
-+    case Keyword.get(opts, :model) do
-+      nil -> ModelSelector.select(provider, opts)
-+      model -> {:ok, model}
-+    end
-+  end
-+
-+  defp maybe_read_cache(messages, model, opts) do
-+    if Keyword.get(opts, :cache, true) and Cache.enabled?() do
-+      case Cache.get(messages, model) do
-+        nil -> {:ok, nil}
-+        response -> {:cached, response}
-+      end
-+    else
-+      {:ok, nil}
-+    end
-+  end
-+
-+  defp execute_with_fallback(provider, model, messages, opts
++  use Lux.L
