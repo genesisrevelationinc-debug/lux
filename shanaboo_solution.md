@@ -1,20 +1,20 @@
  ```diff
 --- a/lux/lib/lux/llm.ex
 +++ b/lux/lib/lux/llm.ex
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,289 @@
 +defmodule Lux.LLM do
 +  @moduledoc """
 +  Universal LLM Provider Abstraction Layer for Lux.
 +
 +  Provides a unified interface for interacting with multiple LLM providers,
 +  with automatic model selection, smart fallback handling, cost tracking,
-+  and performance monitoring.
++  performance monitoring, and caching.
 +
 +  ## Configuration
 +
 +  Configure providers in your application config:
 +
-+      config :lux, Lux.LLM,
++      config :lux, :llm,
 +        default_provider: :openai,
 +        providers: [
 +          openai: [
@@ -31,144 +31,129 @@
 +          ]
 +        ],
 +        fallback_chain: [:openai, :anthropic],
-+        cache: true,
-+        cost_tracking: true,
-+        performance_monitoring: true
++        cache: [
++          enabled: true,
++          ttl: 300_000,  # 5 minutes
++          max_size: 10_000
++        ],
++        cost_tracking: [
++          enabled: true,
++          budget_limit: 100.00  # USD per day
++        ]
 +
 +  ## Usage
 +
-+      # Simple call with default provider
-+      {:ok, response} = Lux.LLM.call("What is the capital of France?")
++  Basic usage with default provider:
 +
-+      # Call with specific provider
-+      {:ok, response} = Lux.LLM.call("What is the capital of France?", provider: :anthropic)
++      {:ok, response} = Lux.LLM.chat("Tell me a joke")
 +
-+      # Call with specific model
-+      {:ok, response} = Lux.LLM.call("What is the capital of France?", model: "gpt-4")
++  Specify provider and model:
 +
-+      # Call with streaming
-+      {:ok, stream} = Lux.LLM.call("Tell me a story", stream: true)
++      {:ok, response} = Lux.LLM.chat("Tell me a joke", provider: :anthropic, model: "claude-3-opus-20240229")
 +
++  With streaming:
++
++      Lux.LLM.chat("Tell me a story", stream: true, stream_to: self())
++
++  With automatic model selection based on task complexity:
++
++      {:ok, response} = Lux.LLM.chat(complex_prompt, auto_select: true, task_complexity: :high)
 +  """
 +
-+  alias Lux.LLM.{Provider, ProviderRegistry, ModelSelector, FallbackHandler, CostTracker, PerformanceMonitor}
++  alias Lux.LLM.{ProviderRegistry, ModelSelector, FallbackHandler, CostTracker, PerformanceMonitor, Cache}
 +
 +  require Logger
 +
-+  @type provider_name :: atom()
-+  @type model_name :: String.t()
-+  @type prompt :: String.t() | list(map())
++  @type provider :: atom()
++  @type model :: String.t()
++  @type prompt :: String.t() | list()
 +  @type opts :: keyword()
-+  @type response :: map()
++  @type response :: %{text: String.t(), model: model(), provider: provider(), usage: map(), metadata: map()}
 +  @type error :: {:error, term()}
 +
-+  # ============================================================================
 +  # Public API
-+  # ============================================================================
 +
 +  @doc """
-+  Makes an LLM call with automatic provider selection and fallback handling.
++  Sends a chat completion request to the LLM.
 +
 +  ## Options
 +
-+  - `:provider` - Specific provider to use (default: configured default)
-+  - `:model` - Specific model to use (auto-selected if not provided)
++  - `:provider` - Specific provider to use (defaults to configured default)
++  - `:model` - Specific model to use (defaults to provider's default)
++  - `:auto_select` - Enable automatic model selection (default: false)
++  - `:task_complexity` - Hint for model selection: `:low`, `:medium`, `:high` (default: `:medium`)
 +  - `:stream` - Enable streaming response (default: false)
++  - `:stream_to` - PID to send stream chunks to (required if stream: true)
 +  - `:temperature` - Sampling temperature (default: 0.7)
 +  - `:max_tokens` - Maximum tokens to generate
-+  - `:fallback` - Enable/disable fallback (default: true)
-+  - `:cache` - Enable/disable caching (default: true)
-+  - `:track_cost` - Enable/disable cost tracking (default: true)
-+  - `:monitor` - Enable/disable performance monitoring (default: true)
-+
++  - `:fallback` - Enable fallback to other providers on failure (default: true)
++  - `:cache` - Enable response caching for this request (default: true)
++  - `:timeout` - Request timeout in milliseconds (default: 30_000)
 +  """
-+  @spec call(prompt(), opts()) :: {:ok, response()} | error()
-+  def call(prompt, opts \\ []) do
-+    start_time = System.monotonic_time()
-+    opts = normalize_opts(opts)
-+
-+    with {:ok, provider} <- get_provider(opts),
-+         {:ok, model} <- get_model(provider, opts),
-+         {:ok, cached} <- maybe_get_cached(prompt, model, opts),
-+         {:ok, response} <- do_call(provider, model, prompt, cached, opts) do
-+      track_performance(start_time, provider, model, response, opts)
-+      track_cost(provider, model, response, opts)
-+      {:ok, response}
-+    else
-+      {:error, reason} ->
-+        handle_fallback(prompt, reason, opts)
++  @spec chat(prompt(), opts()) :: {:ok, response()} | error()
++  def chat(prompt, opts \\ []) do
++    with {:ok, provider} <- resolve_provider(opts),
++         {:ok, model} <- resolve_model(provider, opts),
++         {:ok, cache_key} <- build_cache_key(prompt, provider, model, opts),
++         {:ok, cached} <- maybe_get_cached(opts, cache_key) do
++      case cached do
++        nil ->
++          do_chat_with_fallback(prompt, provider, model, opts, cache_key)
++        response ->
++          {:ok, Map.put(response, :cached, true)}
++      end
 +    end
 +  end
 +
 +  @doc """
-+  Makes an LLM call, raising on error.
++  Sends a chat completion request, raising on error.
 +  """
-+  @spec call!(prompt(), opts()) :: response()
-+  def call!(prompt, opts \\ []) do
-+    case call(prompt, opts) do
++  @spec chat!(prompt(), opts()) :: response()
++  def chat!(prompt, opts \\ []) do
++    case chat(prompt, opts) do
 +      {:ok, response} -> response
-+      {:error, reason} -> raise "LLM call failed: #{inspect(reason)}"
++      {:error, reason} -> raise "LLM chat failed: #{inspect(reason)}"
 +    end
 +  end
 +
 +  @doc """
-+  Streams an LLM response.
++  Lists all available providers and their models.
 +  """
-+  @spec stream(prompt(), opts()) :: Enumerable.t()
-+  def stream(prompt, opts \\ []) do
-+    opts = Keyword.put(opts, :stream, true)
-+
-+    case call(prompt, opts) do
-+      {:ok, %Lux.LLM.Response{stream: stream}} when is_function(stream) ->
-+        stream
-+      {:ok, response} ->
-+        [response]
-+      {:error, reason} ->
-+        raise "LLM stream failed: #{inspect(reason)}"
-+    end
-+  end
-+
-+  @doc """
-+  Returns a list of available providers.
-+  """
-+  @spec list_providers() :: list(provider_name())
++  @spec list_providers() :: list({provider(), list(model())})
 +  def list_providers do
-+    ProviderRegistry.list_providers()
++    ProviderRegistry.list()
 +  end
 +
 +  @doc """
-+  Returns information about a specific provider.
++  Gets information about a specific provider.
 +  """
-+  @spec provider_info(provider_name()) :: {:ok, map()} | error()
-+  def provider_info(provider) do
-+    ProviderRegistry.get_provider(provider)
++  @spec get_provider(provider()) :: {:ok, map()} | error()
++  def get_provider(name) do
++    ProviderRegistry.get(name)
 +  end
 +
 +  @doc """
-+  Returns available models for a provider.
++  Registers a new provider at runtime.
 +  """
-+  @spec list_models(provider_name()) :: list(model_name())
-+  def list_models(provider) do
-+    case ProviderRegistry.get_provider(provider) do
-+      {:ok, config} -> config[:models] || []
-+      {:error, _} -> []
-+    end
++  @spec register_provider(provider(), module(), keyword()) :: :ok | error()
++  def register_provider(name, module, opts \\ []) do
++    ProviderRegistry.register(name, module, opts)
 +  end
 +
 +  @doc """
-+  Returns cost statistics.
++  Gets cost statistics for all providers or a specific provider.
 +  """
-+  @spec cost_stats() :: map()
-+  def cost_stats do
-+    CostTracker.stats()
++  @spec cost_stats(provider() | :all) :: map()
++  def cost_stats(provider \\ :all) do
++    CostTracker.stats(provider)
 +  end
 +
 +  @doc """
-+  Returns performance statistics.
++  Gets performance metrics for all providers or a specific provider.
 +  """
-+  @spec performance_stats() :: map()
-+  def performance_stats do
-+    PerformanceMonitor.stats()
++  @spec performance_metrics(provider() | :all) :: map()
++  def performance_metrics(provider \\ :all) do
++    PerformanceMonitor.metrics(provider)
 +  end
 +
 +  @doc """
@@ -176,11 +161,10 @@
 +  """
 +  @spec clear_cache() :: :ok
 +  def clear_cache do
-+    Lux.LLM.Cache.clear()
++    Cache.clear()
 +  end
 +
-+  # ============================================================================
-+  # Private Functions
-+  # ============================================================================
++  # Private functions
 +
-+ 
++  defp resolve_provider(opts) do
++    provider = opts[:provider] || Application.get_env(:lux, :llm)[:default
