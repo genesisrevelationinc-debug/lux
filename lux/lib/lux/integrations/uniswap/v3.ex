@@ -5,86 +5,39 @@ defmodule Lux.Integrations.Uniswap.V3 do
   """
 
   alias Lux.Integrations.Uniswap.V3.{
-    Pool,
-    Position,
     LiquidityManager,
+    PositionManager,
     FeeManager,
-    PriceRangeOptimizer,
+    PriceOptimizer,
     PositionMonitor,
     Rebalancer
   }
 
   @doc """
-  Creates a new liquidity position in a Uniswap V3 pool.
+  Returns the module version.
   """
-  def create_position(params) do
-    Position.create(params)
-  end
+  @spec version :: String.t()
+  def version, do: "1.0.0"
 
-  @doc """
-  Manages multiple positions across different pools.
-  """
-  def manage_positions(positions) do
-    Position.manage_multiple(positions)
-  end
+  # Delegate to sub-modules for clean API
+  defdelegate create_position(params), to: PositionManager
+  defdelegate close_position(position_id), to: PositionManager
+  defdelegate get_position(position_id), to: PositionManager
+  defdelegate list_positions(filters \\ %{}), to: PositionManager
 
-  @doc """
-  Optimizes price ranges for concentrated liquidity.
-  """
-  def optimize_price_range(pool_data, strategy \\ :balanced) do
-    PriceRangeOptimizer.optimize(pool_data, strategy)
-  end
+  defdelegate add_liquidity(position_id, amount), to: LiquidityManager
+  defdelegate remove_liquidity(position_id, percentage), to: LiquidityManager
+  defdelegate optimize_range(position_id), to: LiquidityManager
 
-  @doc """
-  Selects optimal fee tier based on market conditions.
-  """
-  def select_fee_tier(market_data) do
-    Pool.select_optimal_fee_tier(market_data)
-  end
+  defdelegate collect_fees(position_id), to: FeeManager
+  defdelegate reinvest_fees(position_id), to: FeeManager
 
-  @doc """
-  Collects and reinvests fees from a position.
-  """
-  def collect_and_reinvest(position_id, options \\ []) do
-    FeeManager.collect_and_reinvest(position_id, options)
-  end
+  defdelegate get_optimal_fee_tier(token_a, token_b, volume), to: PriceOptimizer
+  defdelegate calculate_price_range(position_id, strategy), to: PriceOptimizer
 
-  @doc """
-  Monitors position health and returns status.
-  """
-  def monitor_position(position_id) do
-    PositionMonitor.check_health(position_id)
-  end
+  defdelegate get_position_health(position_id), to: PositionMonitor
+  defdelegate monitor_positions, to: PositionMonitor
 
-  @doc """
-  Automatically rebalances a position based on strategy.
-  """
-  def rebalance_position(position_id, strategy) do
-    Rebalancer.rebalance(position_id, strategy)
-  end
-
-  @doc """
-  Calculates impermanent loss for a position.
-  """
-  def calculate_impermanent_loss(position, current_prices) do
-    Position.calculate_impermanent_loss(position, current_prices)
-  end
-
-  @doc """
-  Gets yield optimization recommendations.
-  """
-  def yield_optimization_recommendations(positions) do
-    LiquidityManager.optimize_yield(positions)
-  end
-
-  @doc """
-  Full position health dashboard data.
-  """
-  def position_dashboard(position_ids) when is_list(position_ids) do
-    Enum.map(position_ids, &PositionMonitor.dashboard_data/1)
-  end
-
-  def position_dashboard(position_id) do
-    PositionMonitor.dashboard_data(position_id)
-  end
+  defdelegate rebalance_position(position_id), to: Rebalancer
+  defdelegate auto_rebalance(enabled), to: Rebalancer
 end
