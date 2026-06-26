@@ -1,151 +1,183 @@
- Looking at this issue, I need to implement a comprehensive Uniswap V3 integration for the Lux framework. Let me analyze the repository structure and create the necessary files.
-
-From the root listing, I can see this is an Lux framework with `lux` and `lux_app` directories. The issue requires:
-1. Position creation and management
-2. Liquidity range optimization
-3. Fee collection and reinvestment
-4. Position health monitoring
-5. Automated position adjustment
-6. Documentation and examples
-7. Integration tests for liquidity operations
-8. Performance monitoring dashboard
-
-Let me create the core Uniswap V3 integration files. Based on the Elixir project structure, I'll place these in appropriate locations.
-
-```diff
---- /dev/null
-+++ b/lux/lib/lux/integrations/uniswap_v3.ex
+ ```diff
+--- a/lux/lib/lux/exchanges/uniswap_v3.ex
++++ b/lux/lib/lux/exchanges/uniswap_v3.ex
 @@ -0,0 +1,318 @@
-+defmodule Lux.Integrations.UniswapV3 do
++defmodule Lux.Exchanges.UniswapV3 do
 +  @moduledoc """
-+  Comprehensive Uniswap V3 integration for advanced liquidity management
++  Comprehensive integration with Uniswap V3 for advanced liquidity management
 +  and optimal trading strategies.
 +  """
 +
-+  alias Lux.Integrations.UniswapV3.Position
-+  alias Lux.Integrations.UniswapV3.Pool
-+  alias Lux.Integrations.UniswapV3.Math
-+
-+  @type token_address :: String.t()
-+  @type fee_tier :: 100 | 500 | 3000 | 10000
-+  @type tick_range :: {lower_tick :: integer(), upper_tick :: integer()}
-+  @type liquidity_amount :: non_neg_integer()
++  alias Lux.Exchanges.UniswapV3.Position
++  alias Lux.Exchanges.UniswapV3.Pool
++  alias Lux.Exchanges.UniswapV3.Math
 +
 +  @fee_tiers %{
-+    100 => "0.01%",
-+    500 => "0.05%",
-+    3000 => "0.3%",
-+    10000 => "1%"
++    low: 100,      # 0.01% - For stable pairs
++    medium: 500,   # 0.05% - For standard pairs
++    normal: 3000,  # 0.3%  - For most pairs
++    high: 10000    # 1%    - For exotic pairs
 +  }
 +
 +  @doc """
-+  Returns all available fee tiers with their descriptions.
++  Returns available fee tiers with their descriptions.
 +  """
-+  @spec fee_tiers() :: %{fee_tier() => String.t()}
 +  def fee_tiers, do: @fee_tiers
 +
 +  @doc """
-+  Calculates the optimal fee tier based on token volatility and trading volume.
++  Calculates the optimal fee tier based on pair volatility and volume.
 +  """
-+  @spec optimal_fee_tier(volatility :: float(), volume :: non_neg_integer()) :: fee_tier()
-+  def optimal_fee_tier(volatility, volume) when volatility > 0.8 and volume > 1_000_000, do: 10000
-+  def optimal_fee_tier(volatility, volume) when volatility > 0.5 and volume > 500_000, do: 3000
-+  def optimal_fee_tier(volatility, volume) when volatility > 0.3 and volume > 100_000, do: 500
-+  def optimal_fee_tier(_volatility, _volume), do: 100
-+
-+  @doc """
-+  Creates a new liquidity position with optimized price range.
-+  """
-+  @spec create_position(
-+    token0 :: token_address(),
-+    token1 :: token_address(),
-+    fee :: fee_tier(),
-+    amount0 :: non_neg_integer(),
-+    amount1 :: non_neg_integer(),
-+    options :: keyword()
-+  ) :: {:ok, Position.t()} | {:error, term()}
-+  def create_position(token0, token1, fee, amount0, amount1, options \\ []) do
-+    with {:ok, pool} <- Pool.get_or_create_pool(token0, token1, fee),
-+         {:ok, tick_range} <- calculate_optimal_range(pool, options),
-+         {:ok, position} <- Position.create(%{
-+           pool: pool,
-+           tick_lower: elem(tick_range, 0),
-+           tick_upper: elem(tick_range, 1),
-+           amount0: amount0,
-+           amount1: amount1,
-+           owner: Keyword.get(options, :owner),
-+           slippage_tolerance: Keyword.get(options, :slippage_tolerance, 0.005)
-+         }) do
-+      {:ok, position}
++  def optimal_fee_tier(volatility, volume) when is_number(volatility) and is_number(volume) do
++    cond do
++      volatility < 0.001 and volume > 1_000_000 -> :low
++      volatility < 0.01 and volume > 500_000 -> :medium
++      volatility < 0.05 -> :normal
++      true -> :high
 +    end
 +  end
 +
 +  @doc """
-+  Calculates optimal price range based on market conditions and risk profile.
++  Creates a new liquidity position with concentrated liquidity.
 +  """
-+  @spec calculate_optimal_range(Pool.t(), keyword()) :: {:ok, tick_range()} | {:error, term()}
-+  def calculate_optimal_range(pool, options \\ []) do
-+    risk_profile = Keyword.get(options, :risk_profile, :moderate)
-+    current_tick = Pool.current_tick(pool)
-+    volatility = Pool.volatility(pool)
-+
-+    {width_multiplier, rebalance_buffer} = case risk_profile do
-+      :conservative -> {0.5, 0.1}
-+      :moderate -> {1.0, 0.15}
-+      :aggressive -> {2.0, 0.25}
-+      _ -> {1.0, 0.15}
-+    end
-+
-+    tick_spacing = Pool.tick_spacing(pool)
-+    range_width = round(volatility * width_multiplier * 100)
-+
-+    lower_tick = current_tick - range_width
-+    upper_tick = current_tick + range_width
-+
-+    # Align to tick spacing
-+    lower_tick = Math.align_tick(lower_tick, tick_spacing)
-+    upper_tick = Math.align_tick(upper_tick, tick_spacing)
-+
-+    # Ensure valid range
-+    lower_tick = max(lower_tick, Pool.min_tick())
-+    upper_tick = min(upper_tick, Pool.max_tick())
-+
-+    if lower_tick < upper_tick do
-+      {:ok, {lower_tick, upper_tick}}
-+    else
-+      {:error, :invalid_tick_range}
-+    end
++  def create_position(params) do
++    Position.create(params)
 +  end
 +
 +  @doc """
-+  Collects fees from a position and optionally reinvests them.
++  Adds liquidity to an existing position.
 +  """
-+  @spec collect_fees(Position.t(), keyword()) :: {:ok, map()} | {:error, term()}
-+  def collect_fees(position, options \\ []) do
-+    with {:ok, fees} <- Position.collect_fees(position) do
-+      reinvest = Keyword.get(options, :reinvest, false)
-+
-+      if reinvest and fees_favorable?(fees, position) do
-+        reinvest_fees(position, fees)
-+      else
-+        {:ok, %{fees: fees, reinvested: false}}
-+      end
-+    end
++  def add_liquidity(position_id, amount0, amount1) do
++    Position.add_liquidity(position_id, amount0, amount1)
 +  end
 +
 +  @doc """
-+  Monitors position health and returns status with recommendations.
++  Removes liquidity from a position.
 +  """
-+  @spec monitor_position(Position.t()) :: map()
-+  def monitor_position(position) do
-+    health = Position.health(position)
-+    pool = position.pool
-+    current_tick = Pool.current_tick(pool)
++  def remove_liquidity(position_id, percentage) do
++    Position.remove_liquidity(position_id, percentage)
++  end
 +
-+    in_range = current_tick >= position.tick_lower and current_tick <= position.tick_upper
-+    utilization = Position.utilization(position)
-+    il_estimate = Position.impermanent_loss(position)
++  @doc """
++  Collects fees earned by a position.
++  """
++  def collect_fees(position_id) do
++    Position.collect_fees(position_id)
++  end
 +
-+    %{
-+      position_id: position.id,
-+      status: if(in_range, do: :active, else
++  @doc """
++  Reinvests collected fees back into the position.
++  """
++  def reinvest_fees(position_id) do
++    Position.reinvest_fees(position_id)
++  end
++
++  @doc """
++  Calculates optimal price range based on volatility and risk parameters.
++  """
++  def optimal_price_range(current_price, volatility, risk_tolerance) do
++    Math.optimal_price_range(current_price, volatility, risk_tolerance)
++  end
++
++  @doc """
++  Monitors position health and returns status.
++  """
++  def position_health(position_id) do
++    Position.health(position_id)
++  end
++
++  @doc """
++  Automatically rebalances a position based on strategy.
++  """
++  def rebalance_position(position_id, strategy) do
++    Position.rebalance(position_id, strategy)
++  end
++
++  @doc """
++  Calculates impermanent loss for a position.
++  """
++  def impermanent_loss(entry_price, current_price, lower_bound, upper_bound) do
++    Math.impermanent_loss(entry_price, current_price, lower_bound, upper_bound)
++  end
++
++  @doc """
++  Gets yield optimization recommendations for a position.
++  """
++  def yield_optimization_recommendations(position_id) do
++    Position.yield_recommendations(position_id)
++  end
++
++  @doc """
++  Monitors multiple positions and returns aggregated status.
++  """
++  def monitor_positions(position_ids) when is_list(position_ids) do
++    Enum.map(position_ids, &position_health/1)
++  end
++end
++
++defmodule Lux.Exchanges.UniswapV3.Position do
++  @moduledoc """
++  Manages individual Uniswap V3 liquidity positions.
++  """
++
++  alias Lux.Exchanges.UniswapV3.Math
++
++  @type t :: %__MODULE__{
++    id: String.t(),
++    pool_address: String.t(),
++    token0: String.t(),
++    token1: String.t(),
++    fee: non_neg_integer(),
++    tick_lower: integer(),
++    tick_upper: integer(),
++    liquidity: non_neg_integer(),
++    amount0: Decimal.t(),
++    amount1: Decimal.t(),
++    fees_earned0: Decimal.t(),
++    fees_earned1: Decimal.t(),
++    created_at: DateTime.t(),
++    last_rebalance: DateTime.t() | nil
++  }
++
++  defstruct [
++    :id, :pool_address, :token0, :token1, :fee,
++    :tick_lower, :tick_upper, :liquidity,
++    :amount0, :amount1, :fees_earned0, :fees_earned1,
++    :created_at, :last_rebalance
++  ]
++
++  @doc """
++  Creates a new position with validated parameters.
++  """
++  def create(params) do
++    position = struct!(__MODULE__, Map.merge(default_params(), params))
++    {:ok, position}
++  end
++
++  @doc """
++  Adds liquidity to the position.
++  """
++  def add_liquidity(%__MODULE__{} = position, amount0, amount1) do
++    updated = %{position |
++      amount0: Decimal.add(position.amount0, amount0),
++      amount1: Decimal.add(position.amount1, amount1),
++      liquidity: calculate_liquidity(position, amount0, amount1)
++    }
++    {:ok, updated}
++  end
++
++  @doc """
++  Removes a percentage of liquidity from the position.
++  """
++  def remove_liquidity(%__MODULE__{} = position, percentage) when percentage > 0 and percentage <= 100 do
++    factor = Decimal.div(percentage, 100)
++    removed_liquidity = Decimal.mult(position.liquidity, factor)
++    
++    updated = %{position |
++      liquidity: Decimal.sub(position.liquidity, removed_liquidity),
++      amount0: Decimal.sub(position.amount0, Decimal.mult(position.amount0, factor)),
++      amount1: Decimal.sub(position.amount1, Decimal.mult(position.amount1, factorborrowed))
++    }
++    {:ok, updated, removed_liquidity}
++  end
++
++  @doc """
