@@ -1,163 +1,151 @@
  Looking at this issue, I need to implement a comprehensive Uniswap V3 integration for the Lux framework. Let me analyze the repository structure and create the necessary files.
 
-Based on the repository structure, this is an Elixir project with:
-- `lux/` - main library code
-- `lux_app/` - application code
+From the root listing, I can see this is an Lux framework with `lux` and `lux_app` directories. The issue requires:
+1. Position creation and management
+2. Liquidity range optimization
+3. Fee collection and reinvestment
+4. Position health monitoring
+5. Automated position adjustment
+6. Documentation and examples
+7. Integration tests for liquidity operations
+8. Performance monitoring dashboard
 
-The issue asks for Uniswap V3 integration with liquidity management. I'll need to create:
-1. Core Uniswap V3 integration modules
-2. Liquidity management functionality
-3. Position management
-4. Tests
-
-Let me create the necessary files:
+Let me create the core Uniswap V3 integration files. Based on the Elixir project structure, I'll place these in appropriate locations.
 
 ```diff
 --- /dev/null
-+++ b/lux/lib/lux/exchanges/uniswap_v3.ex
-@@ -0,0 +1,298 @@
-+defmodule Lux.Exchanges.UniswapV3 do
++++ b/lux/lib/lux/integrations/uniswap_v3.ex
+@@ -0,0 +1,318 @@
++defmodule Lux.Integrations.UniswapV3 do
 +  @moduledoc """
 +  Comprehensive Uniswap V3 integration for advanced liquidity management
 +  and optimal trading strategies.
 +  """
 +
-+  alias Lux.Exchanges.UniswapV3.{
-+    Pool,
-+    Position,
-+    LiquidityRange,
-+    FeeTier,
-+    PriceOracle
-+  }
++  alias Lux.Integrations.UniswapV3.Position
++  alias Lux.Integrations.UniswapV3.Pool
++  alias Lux.Integrations.UniswapV3.Math
 +
-+  @type pool_address :: String.t()
 +  @type token_address :: String.t()
-+  @type token_id :: non_neg_integer()
++  @type fee_tier :: 100 | 500 | 3000 | 10000
++  @type tick_range :: {lower_tick :: integer(), upper_tick :: integer()}
 +  @type liquidity_amount :: non_neg_integer()
-+  @type tick_range :: {integer(), integer()}
-+  @type price_range :: {Decimal.t(), Decimal.t()}
 +
-+  # Fee tiers as defined by Uniswap V3
 +  @fee_tiers %{
-+    low: 100,      # 0.01% - stable pairs
-+    medium: 500,   # 0.05% - standard pairs
-+    high: 3000,    # 0.3% - most pairs
-+    maximum: 10000 # 1% - exotic pairs
++    100 => "0.01%",
++    500 => "0.05%",
++    3000 => "0.3%",
++    10000 => "1%"
 +  }
 +
 +  @doc """
-+  Returns all available fee tiers.
++  Returns all available fee tiers with their descriptions.
 +  """
-+  @spec fee_tiers() :: map()
++  @spec fee_tiers() :: %{fee_tier() => String.t()}
 +  def fee_tiers, do: @fee_tiers
 +
 +  @doc """
-+  Gets the fee tier value by name.
++  Calculates the optimal fee tier based on token volatility and trading volume.
 +  """
-+  @spec fee_tier(atom()) :: non_neg_integer() | nil
-+  def fee_tier(name) when is_atom(name), do: Map.get(@fee_tiers, name)
++  @spec optimal_fee_tier(volatility :: float(), volume :: non_neg_integer()) :: fee_tier()
++  def optimal_fee_tier(volatility, volume) when volatility > 0.8 and volume > 1_000_000, do: 10000
++  def optimal_fee_tier(volatility, volume) when volatility > 0.5 and volume > 500_000, do: 3000
++  def optimal_fee_tier(volatility, volume) when volatility > 0.3 and volume > 100_000, do: 500
++  def optimal_fee_tier(_volatility, _volume), do: 100
 +
 +  @doc """
-+  Creates a new liquidity position with concentrated liquidity.
++  Creates a new liquidity position with optimized price range.
 +  """
-+  @spec create_position(map()) :: {:ok, Position.t()} | {:error, term()}
-+  def create_position(params) do
-+    with {:ok, validated} <- validate_position_params(params),
-+         {:ok, pool} <- get_or_create_pool(validated),
-+         {:ok, position} <- Position.create(validated, pool) do
++  @spec create_position(
++    token0 :: token_address(),
++    token1 :: token_address(),
++    fee :: fee_tier(),
++    amount0 :: non_neg_integer(),
++    amount1 :: non_neg_integer(),
++    options :: keyword()
++  ) :: {:ok, Position.t()} | {:error, term()}
++  def create_position(token0, token1, fee, amount0, amount1, options \\ []) do
++    with {:ok, pool} <- Pool.get_or_create_pool(token0, token1, fee),
++         {:ok, tick_range} <- calculate_optimal_range(pool, options),
++         {:ok, position} <- Position.create(%{
++           pool: pool,
++           tick_lower: elem(tick_range, 0),
++           tick_upper: elem(tick_range, 1),
++           amount0: amount0,
++           amount1: amount1,
++           owner: Keyword.get(options, :owner),
++           slippage_tolerance: Keyword.get(options, :slippage_tolerance, 0.005)
++         }) do
 +      {:ok, position}
 +    end
 +  end
 +
 +  @doc """
-+  Adds liquidity to an existing position.
++  Calculates optimal price range based on market conditions and risk profile.
 +  """
-+  @spec add_liquidity(token_id(), liquidity_amount(), map()) ::
-+          {:ok, Position.t()} | {:error, term()}
-+  def add_liquidity(token_id, amount, options) do
-+    with {:ok, position} <- Position.get(token_id),
-+         :ok <- Position.validate_addition(position, amount, options),
-+         {:ok, updated} <- Position.add_liquidity(position, amount, options) do
-+      {:ok, updated}
++  @spec calculate_optimal_range(Pool.t(), keyword()) :: {:ok, tick_range()} | {:error, term()}
++  def calculate_optimal_range(pool, options \\ []) do
++    risk_profile = Keyword.get(options, :risk_profile, :moderate)
++    current_tick = Pool.current_tick(pool)
++    volatility = Pool.volatility(pool)
++
++    {width_multiplier, rebalance_buffer} = case risk_profile do
++      :conservative -> {0.5, 0.1}
++      :moderate -> {1.0, 0.15}
++      :aggressive -> {2.0, 0.25}
++      _ -> {1.0, 0.15}
++    end
++
++    tick_spacing = Pool.tick_spacing(pool)
++    range_width = round(volatility * width_multiplier * 100)
++
++    lower_tick = current_tick - range_width
++    upper_tick = current_tick + range_width
++
++    # Align to tick spacing
++    lower_tick = Math.align_tick(lower_tick, tick_spacing)
++    upper_tick = Math.align_tick(upper_tick, tick_spacing)
++
++    # Ensure valid range
++    lower_tick = max(lower_tick, Pool.min_tick())
++    upper_tick = min(upper_tick, Pool.max_tick())
++
++    if lower_tick < upper_tick do
++      {:ok, {lower_tick, upper_tick}}
++    else
++      {:error, :invalid_tick_range}
 +    end
 +  end
 +
 +  @doc """
-+  Removes liquidity from a position.
++  Collects fees from a position and optionally reinvests them.
 +  """
-+  @spec remove_liquidity(token_id(), liquidity_amount(), map()) ::
-+          {:ok, Position.t()} | {:error, term()}
-+  def remove_liquidity(token_id, amount, options) do
-+    with {:ok, position} <- Position.get(token_id),
-+         :ok <- Position.validate_removal(position, amount),
-+         {:ok, updated} <- Position.remove_liquidity(position, amount, options) do
-+      {:ok, updated}
++  @spec collect_fees(Position.t(), keyword()) :: {:ok, map()} | {:error, term()}
++  def collect_fees(position, options \\ []) do
++    with {:ok, fees} <- Position.collect_fees(position) do
++      reinvest = Keyword.get(options, :reinvest, false)
++
++      if reinvest and fees_favorable?(fees, position) do
++        reinvest_fees(position, fees)
++      else
++        {:ok, %{fees: fees, reinvested: false}}
++      end
 +    end
 +  end
 +
 +  @doc """
-+  Collects fees earned by a position.
++  Monitors position health and returns status with recommendations.
 +  """
-+  @spec collect_fees(token_id()) :: {:ok, map()} | {:error, term()}
-+  def collect_fees(token_id) do
-+    with {:ok, position} <- Position.get(token_id),
-+         {:ok, fees} <- Position.collect_fees(position) do
-+      {:ok, fees}
-+    end
-+  end
++  @spec monitor_position(Position.t()) :: map()
++  def monitor_position(position) do
++    health = Position.health(position)
++    pool = position.pool
++    current_tick = Pool.current_tick(pool)
 +
-+  @doc """
-+  Reinvests collected fees back into the position.
-+  """
-+  @spec reinvest_fees(token_id()) :: {:ok, Position.t()} | {:error, term()}
-+  def reinvest_fees(token_id) do
-+    with {:ok, position} <- Position.get(token_id),
-+         {:ok, fees} <- Position.collect_fees(position),
-+         {:ok, updated} <- Position.reinvest_fees(position, fees) do
-+      {:ok, updated}
-+    end
-+  end
++    in_range = current_tick >= position.tick_lower and current_tick <= position.tick_upper
++    utilization = Position.utilization(position)
++    il_estimate = Position.impermanent_loss(position)
 +
-+  @doc """
-+  Closes a position and removes all liquidity.
-+  """
-+  @spec close_position(token_id()) :: {:ok, map()} | {:error, term()}
-+  def close_position(token_id) do
-+    with {:ok, position} <- Position.get(token_id),
-+         {:ok, result} <- Position.close(position) do
-+      {:ok, result}
-+    end
-+  end
-+
-+  @doc """
-+  Gets the health status of a position.
-+  """
-+  @spec position_health(token_id()) :: {:ok, map()} | {:error, term()}
-+  def position_health(token_id) do
-+    with {:ok, position} <- Position.get(token_id) do
-+      health = Position.calculate_health(position)
-+      {:ok, health}
-+    end
-+  end
-+
-+  @doc """
-+  Optimizes the price range for a position based on market conditions.
-+  """
-+  @spec optimize_range(token_id(), map()) :: {:ok, Position.t()} | {:error, term()}
-+  def optimize_range(token_id, options) do
-+    with {:ok, position} <- Position.get(token_id),
-+         {:ok, new_range} <- LiquidityRange.optimize(position, options),
-+         {:ok, updated} <- Position.adjust_range(position, new_range) do
-+      {:ok, updated}
-+    end
-+  end
-+
-+  @doc """
-+  Automatically rebalances a position based on configured strategy.
-+  """
-+  @spec rebalance_position(token_id(), map()) :: {:ok, Position.t()} | {:error, term()}
-+  def rebalance_position(token_id, options) do
-+    with {:ok, position} <- Position.get(token_id),
-+         {:ok, strategy} <- detect_rebalance_strategy(position, options),
-+         {:ok, rebalanced} <- apply_rebalance(position, strategy) do
-+      {:
++    %{
++      position_id: position.id,
++      status: if(in_range, do: :active, else
