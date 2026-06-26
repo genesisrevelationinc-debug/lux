@@ -1,16 +1,22 @@
 defmodule Lux do
   @moduledoc """
-  Documentation for `Lux`.
+  Lux is a framework for building intelligent, adaptive, and collaborative multi-agent systems.
   """
+  alias Lux.Integrations.Uniswap.V3
 
   @doc """
-  Hello world.
+  Returns the version of Lux.
 
   ## Examples
+  def version do
+    "0.1.0"
+  end
 
-      iex> Lux.hello()
-      :world
-
+  @doc """
+  Returns the Uniswap V3 integration module.
+  """
+  def uniswap_v3, do: V3
+end
   """
   def hello do
     :world
