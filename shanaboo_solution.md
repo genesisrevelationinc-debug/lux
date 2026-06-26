@@ -1,21 +1,21 @@
- Looking at this issue, I need to implement a comprehensive Uniswap V3 integration for the Lux framework. This is an Elixir project based on the structure. Let me analyze what's needed and create the appropriate files.
+ Looking at this issue, I need to implement a comprehensive Uniswap V3 integration for the Lux framework. Let me analyze the repository structure and create the necessary files.
 
-The issue requires:
-1. Position creation and management
-2. Liquidity range optimization
-3. Fee collection and reinvestment
-4. Position health monitoring
-5. Automated position adjustment
-6. Documentation and examples
-7. Integration tests for liquidity operations
-8. Performance monitoring dashboard
+Based on the repository structure, this is an Elixir project with:
+- `lux/` - main library code
+- `lux_app/` - application code
 
-Let me create the core Uniswap V3 integration files:
+The issue asks for Uniswap V3 integration with liquidity management. I'll need to create:
+1. Core Uniswap V3 integration modules
+2. Liquidity management functionality
+3. Position management
+4. Tests
+
+Let me create the necessary files:
 
 ```diff
 --- /dev/null
 +++ b/lux/lib/lux/exchanges/uniswap_v3.ex
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,298 @@
 +defmodule Lux.Exchanges.UniswapV3 do
 +  @moduledoc """
 +  Comprehensive Uniswap V3 integration for advanced liquidity management
@@ -25,59 +25,46 @@ Let me create the core Uniswap V3 integration files:
 +  alias Lux.Exchanges.UniswapV3.{
 +    Pool,
 +    Position,
-+    LiquidityManager,
-+    FeeManager,
-+    PriceCalculator,
-+    PositionMonitor
++    LiquidityRange,
++    FeeTier,
++    PriceOracle
 +  }
 +
-+  @type address :: String.t()
++  @type pool_address :: String.t()
++  @type token_address :: String.t()
 +  @type token_id :: non_neg_integer()
-+  @type liquidity :: non_neg_integer()
-+  @type sqrt_price_x96 :: non_neg_integer()
-+  @type tick :: integer()
-+  @type fee_tier :: 100 | 500 | 3000 | 10000
++  @type liquidity_amount :: non_neg_integer()
++  @type tick_range :: {integer(), integer()}
++  @type price_range :: {Decimal.t(), Decimal.t()}
 +
++  # Fee tiers as defined by Uniswap V3
 +  @fee_tiers %{
-+    100 => %{description: "0.01% - Best for very stable pairs", tick_spacing: 1},
-+    500 => %{description: "0.05% - Best for stable pairs", tick_spacing: 10},
-+    3000 => %{description: "0.3% - Best for most pairs", tick_spacing: 60},
-+    10000 => %{description: "1% - Best for exotic pairs", tick_spacing: 200}
++    low: 100,      # 0.01% - stable pairs
++    medium: 500,   # 0.05% - standard pairs
++    high: 3000,    # 0.3% - most pairs
++    maximum: 10000 # 1% - exotic pairs
 +  }
 +
 +  @doc """
-+  Returns all available fee tiers with their descriptions.
++  Returns all available fee tiers.
 +  """
 +  @spec fee_tiers() :: map()
 +  def fee_tiers, do: @fee_tiers
 +
 +  @doc """
-+  Returns the recommended fee tier based on pair volatility.
++  Gets the fee tier value by name.
 +  """
-+  @spec recommend_fee_tier(float()) :: fee_tier()
-+  def recommend_fee_tier(volatility) when volatility < 0.001, do: 100
-+  def recommend_fee_tier(volatility) when volatility < 0.01, do: 500
-+  def recommend_fee_tier(volatility) when volatility < 0.05, do: 3000
-+  def recommend在任何地方都使用 10000
++  @spec fee_tier(atom()) :: non_neg_integer() | nil
++  def fee_tier(name) when is_atom(name), do: Map.get(@fee_tiers, name)
 +
 +  @doc """
-+  Creates a new liquidity position with optimized price range.
++  Creates a new liquidity position with concentrated liquidity.
 +  """
 +  @spec create_position(map()) :: {:ok, Position.t()} | {:error, term()}
 +  def create_position(params) do
-+    with {:ok, pool} <- Pool.get_or_create_pool(params),
-+         {:ok, optimized_range} <- optimize_price_range(pool, params),
-+         {:ok, position} <- Position.create(%{
-+           pool: pool,
-+           tick_lower: optimized_range.tick_lower,
-+           tick_upper: optimized_range.tick_upper,
-+           liquidity: optimized_range.liquidity,
-+           owner: params.owner,
-+           token0: params.token0,
-+           token1: params.token1,
-+           fee: params.fee
-+         }) do
-+      PositionMonitor.track(position)
++    with {:ok, validated} <- validate_position_params(params),
++         {:ok, pool} <- get_or_create_pool(validated),
++         {:ok, position} <- Position.create(validated, pool) do
 +      {:ok, position}
 +    end
 +  end
@@ -85,11 +72,12 @@ Let me create the core Uniswap V3 integration files:
 +  @doc """
 +  Adds liquidity to an existing position.
 +  """
-+  @spec add_liquidity(token_id(), map()) :: {:ok, Position.t()} | {:error, term()}
-+  def add_liquidity(token_id, params) do
++  @spec add_liquidity(token_id(), liquidity_amount(), map()) ::
++          {:ok, Position.t()} | {:error, term()}
++  def add_liquidity(token_id, amount, options) do
 +    with {:ok, position} <- Position.get(token_id),
-+         {:ok, updated} <- Position.add_liquidity(position, params) do
-+      PositionMonitor.update(updated)
++         :ok <- Position.validate_addition(position, amount, options),
++         {:ok, updated} <- Position.add_liquidity(position, amount, options) do
 +      {:ok, updated}
 +    end
 +  end
@@ -97,41 +85,47 @@ Let me create the core Uniswap V3 integration files:
 +  @doc """
 +  Removes liquidity from a position.
 +  """
-+  @spec remove_liquidity(token_id(), map()) :: {:ok, Position.t()} | {:error, term()}
-+  def remove_liquidity(token_id, params) do
++  @spec remove_liquidity(token_id(), liquidity_amount(), map()) ::
++          {:ok, Position.t()} | {:error, term()}
++  def remove_liquidity(token_id, amount, options) do
 +    with {:ok, position} <- Position.get(token_id),
-+         {:ok, updated} <- Position.remove_liquidity(position, params) do
-+      PositionMonitor.update(updated)
++         :ok <- Position.validate_removal(position, amount),
++         {:ok, updated} <- Position.remove_liquidity(position, amount, options) do
 +      {:ok, updated}
 +    end
 +  end
 +
 +  @doc """
-+  Collects fees from a position and optionally reinvests them.
++  Collects fees earned by a position.
 +  """
-+  @spec collect_fees(token_id(), keyword()) :: {:ok, map()} | {:error, term()}
-+  def collect_fees(token_id, opts \\ []) do
++  @spec collect_fees(token_id()) :: {:ok, map()} | {:error, term()}
++  def collect_fees(token_id) do
 +    with {:ok, position} <- Position.get(token_id),
-+         {:ok, fees} <- FeeManager.collect(position) do
-+      if Keyword.get(opts, :reinvest, false) do
-+        reinvest_fees(position, fees)
-+      else
-+        {:ok, %{fees: fees, reinvested: false}}
-+      end
++         {:ok, fees} <- Position.collect_fees(position) do
++      {:ok, fees}
 +    end
 +  end
 +
 +  @doc """
-+  Closes a position and returns all assets.
++  Reinvests collected fees back into the position.
++  """
++  @spec reinvest_fees(token_id()) :: {:ok, Position.t()} | {:error, term()}
++  def reinvest_fees(token_id) do
++    with {:ok, position} <- Position.get(token_id),
++         {:ok, fees} <- Position.collect_fees(position),
++         {:ok, updated} <- Position.reinvest_fees(position, fees) do
++      {:ok, updated}
++    end
++  end
++
++  @doc """
++  Closes a position and removes all liquidity.
 +  """
 +  @spec close_position(token_id()) :: {:ok, map()} | {:error, term()}
 +  def close_position(token_id) do
 +    with {:ok, position} <- Position.get(token_id),
-+         {:ok, fees} <- FeeManager.collect(position),
-+         {:ok, removed} <- Position.remove_all_liquidity(position),
-+         :ok <- Position.close(position) do
-+      PositionMonitor.untrack(token_id)
-+      {:ok, %{position: removed, fees: fees}}
++         {:ok, result} <- Position.close(position) do
++      {:ok, result}
 +    end
 +  end
 +
@@ -141,22 +135,29 @@ Let me create the core Uniswap V3 integration files:
 +  @spec position_health(token_id()) :: {:ok, map()} | {:error, term()}
 +  def position_health(token_id) do
 +    with {:ok, position} <- Position.get(token_id) do
-+      health = PositionMonitor.health_check(position)
++      health = Position.calculate_health(position)
 +      {:ok, health}
 +    end
 +  end
 +
 +  @doc """
-+  Rebalances a position based on current market conditions.
++  Optimizes the price range for a position based on market conditions.
 +  """
-+  @spec rebalance_position(token_id(), map()) :: {:ok, Position.t()} | {:error, term()}
-+  def rebalance_position(token_id, params) do
++  @spec optimize_range(token_id(), map()) :: {:ok, Position.t()} | {:error, term()}
++  def optimize_range(token_id, options) do
 +    with {:ok, position} <- Position.get(token_id),
-+         {:ok, rebalanced} <- LiquidityManager.rebalance(position, params) do
-+      PositionMonitor.update(rebalanced)
-+      {:ok, rebalanced}
++         {:ok, new_range} <- LiquidityRange.optimize(position, options),
++         {:ok, updated} <- Position.adjust_range(position, new_range) do
++      {:ok, updated}
 +    end
 +  end
 +
 +  @doc """
-+
++  Automatically rebalances a position based on configured strategy.
++  """
++  @spec rebalance_position(token_id(), map()) :: {:ok, Position.t()} | {:error, term()}
++  def rebalance_position(token_id, options) do
++    with {:ok, position} <- Position.get(token_id),
++         {:ok, strategy} <- detect_rebalance_strategy(position, options),
++         {:ok, rebalanced} <- apply_rebalance(position, strategy) do
++      {:
