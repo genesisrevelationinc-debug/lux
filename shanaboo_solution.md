@@ -1,159 +1,181 @@
  ```diff
---- a/lux/lib/lux/exchanges/uniswap_v3.ex
+--- /dev/null
 +++ b/lux/lib/lux/exchanges/uniswap_v3.ex
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,1024 @@
 +defmodule Lux.Exchanges.UniswapV3 do
 +  @moduledoc """
-+  Comprehensive integration with Uniswap V3 for advanced liquidity management
++  Comprehensive Uniswap V3 integration for advanced liquidity management
 +  and optimal trading strategies.
++
++  ## Features
++  - Concentrated liquidity management
++  - Multi-pool position management
++  - Price range optimization
++  - Fee tier selection
++  - Automated rebalancing
++  - Impermanent loss protection
++  - Position monitoring
++  - Yield optimization
 +  """
 +
-+  alias Lux.Exchanges.UniswapV3.Position
-+  alias Lux.Exchanges.UniswapV3.Pool
-+  alias Lux.Exchanges.UniswapV3.LiquidityMath
-+  alias Lux.Exchanges.UniswapV3.PriceRange
++  alias Lux.Exchanges.UniswapV3.{
++    Position,
++    Pool,
++    LiquidityRange,
++    FeeCalculator,
++    PriceOptimizer,
++    Rebalancer,
++    ImpermanentLoss,
++    PositionMonitor,
++    YieldOptimizer
++  }
++
++  require Logger
++
++  # ============================================================================
++  # Types
++  # ============================================================================
++
++  @type token_address :: String.t()
++  @type pool_address :: String.t()
++  @type position_id :: non_neg_integer()
++  @type tick_range :: {integer(), integer()}
++  @type liquidity_amount :: non_neg_integer()
++  @type fee_tier :: 100 | 500 | 3000 | 10000
++
++  @type pool_params :: %{
++          token0: token_address(),
++          token1: token_address(),
++          fee: fee_tier(),
++          tick_spacing: integer()
++        }
++
++  @type position_params :: %{
++          pool: pool_address(),
++          tick_lower: integer(),
++          tick_upper: integer(),
++          amount0_desired: non_neg_integer(),
++          amount1_desired: non_neg_integer(),
++          amount0_min: non_neg_integer(),
++          amount1_min: non_neg_integer(),
++          recipient: String.t(),
++          deadline: non_neg_integer()
++        }
++
++  @type liquidity_range :: %{
++          lower_price: float(),
++          upper_price: float(),
++          current_price: float()
++        }
++
++  @type position_state :: %{
++          id: position_id(),
++          pool: pool_address(),
++          tick_lower: integer(),
++          tick_upper: integer(),
++          liquidity: liquidity_amount(),
++          tokens_owed0: non_neg_integer(),
++          tokens_owed1: non_neg_integer(),
++          fee_growth_inside0_last_x128: non_neg_integer(),
++          fee_growth_inside1_last_x128: non_neg_integer()
++        }
++
++  @type pool_state :: %{
++          address: pool_address(),
++          token0: token_address(),
++          token1: token_address(),
++          fee: fee_tier(),
++          tick_spacing: integer(),
++          liquidity: non_neg_integer(),
++          sqrt_price_x96: non_neg_integer(),
++          tick: integer(),
++          fee_growth_global0_x128: non_neg_integer(),
++          fee_growth_global1_x128: non_neg_integer()
++        }
++
++  @type rebalance_strategy :: :passive | :active | :aggressive
++
++  @type rebalance_config :: %{
++          strategy: rebalance_strategy(),
++          threshold_percent: float(),
++          rebalance_interval: non_neg_integer(),
++          max_slippage_percent: float()
++        }
++
++  @type yield_metrics :: %{
++          apr: float(),
++          apy: float(),
++          fee_earned_24h: float(),
++          impermanent_loss_24h: float(),
++          total_return_24h: float()
++        }
++
++  # ============================================================================
++  # Constants
++  # ============================================================================
++
++  # Uniswap V3 contract addresses (mainnet)
++  @factory_address "0x1F98431c8aD98523631aE4C8f3E8D0a34B8C3C1D"
++  @position_manager_address "0xC36442b4a4522E871399CD717aBDD84711c13e5D"
++  @quoter_address "0xb27308f9F90D6074630f8026f0fD0E0B02D50eEe"
++
++  # Fee tiers and their corresponding tick spacing
++  @fee_tiers %{
++    100 => 1,     # 0.01%
++    500 => 10,    # 0.05%
++    3000 => 60,   # 0.3  %
++    10000 => 200  # 1%
++  }
++
++  # Q96 constant for price calculations
++  @q96 0x1000000000000000000000000
++
++  # ============================================================================
++  # Public API - Pool Operations
++  # ============================================================================
 +
 +  @doc """
-+  Creates a new concentrated liquidity position.
++  Creates a new Uniswap V3 pool for the given token pair and fee tier.
 +  """
-+  @spec create_position(map()) :: {:ok, Position.t()} | {:error, term()}
++  @spec create_pool(token_address(), token_address(), fee_tier()) ::
++          {:ok, pool_address()} | {:error, term()}
++  def create_pool(token0, token1, fee) do
++    with :ok <- validate_fee_tier(fee),
++         :ok <- validate_token_pair(token0, token1),
++         {:ok, tick_spacing} <- Map.fetch(@fee_tiers, fee) do
++      Pool.create(token0, token1, fee, tick_spacing)
++    end
++  end
++
++  @doc """
++  Gets the current state of a pool.
++  """
++  @spec get_pool_state(pool_address()) :: {:ok, pool_state()} | {:error, term()}
++  def get_pool_state(pool_address) do
++    Pool.get_state(pool_address)
++  end
++
++  @doc """
++  Calculates the optimal fee tier for a given token pair based on
++  volatility and volume metrics.
++  """
++  @spec optimize_fee_tier(token_address(), token_address(), map()) ::
++          {:ok, fee_tier()} | {:error, term()}
++  def optimize_fee_tier(token0, token1, metrics) do
++    FeeCalculator.optimize_tier(token0, token1, metrics)
++  end
++
++  # ============================================================================
++  # Public API - Position Management
++  # ============================================================================
++
++  @doc """
++  Creates a new liquidity position in a Uniswap V3 pool.
++  """
++  @spec create_position(position_params()) ::
++          {:ok, position_state()} | {:error, term()}
 +  def create_position(params) do
-+    Position.create(params)
-+  end
-+
-+  @doc """
-+  Closes a position and removes all liquidity.
-+  """
-+  @spec close_position(String.t()) :: {:ok, map()} | {:error, term()}
-+  def close_position(position_id) do
-+    Position.close(position_id)
-+  end
-+
-+  @doc """
-+  Adds liquidity to an existing position.
-+  """
-+  @spec add_liquidity(String.t(), Decimal.t()) :: {:ok, Position.t()} | {:error, term()}
-+  def add_liquidity(position_id, amount) do
-+    Position.add_liquidity(position_id, amount)
-+  end
-+
-+  @doc """
-+  Removes liquidity from a position.
-+  """
-+  @spec remove_liquidity(String.t(), Decimal.t()) :: {:ok, Position.t()} | {:error, term()}
-+  def remove_liquidity(position_id, percentage) do
-+    Position.remove_liquidity(position_id, percentage)
-+  end
-+
-+  @doc """
-+  Collects fees from a position.
-+  """
-+  @spec collect_fees(String.t()) :: {:ok, map()} | {:error, term()}
-+  def collect_fees(position_id) do
-+    Position.collect_fees(position_id)
-+  end
-+
-+  @doc """
-+  Reinvests collected fees into the position.
-+  """
-+  @spec reinvest_fees(String.t()) :: {:ok, Position.t()} | {:error, term()}
-+  def reinvest_fees(position_id) do
-+    Position.reinvest_fees(position_id)
-+  end
-+
-+  @doc """
-+  Gets optimal price range for a given pool based on volatility.
-+  """
-+  @spec optimal_price_range(String.t(), keyword()) :: {:ok, PriceRange.t()} | {:error, term()}
-+  def optimal_price_range(pool_address, opts \\ []) do
-+    PriceRange.calculate(pool_address, opts)
-+  end
-+
-+  @doc """
-+  Selects optimal fee tier based on market conditions.
-+  """
-+  @spec select_fee_tier(String.t(), keyword()) :: {:ok, non_neg_integer()} | {:error, term()}
-+  def select_fee_tier(token_pair, opts \\ []) do
-+    Pool.select_optimal_fee_tier(token_pair, opts)
-+  end
-+
-+  @doc """
-+  Monitors position health and returns metrics.
-+  """
-+  @spec monitor_position(String.t()) :: {:ok, map()} | {:error, term()}
-+  def monitor_position(position_id) do
-+    Position.health_metrics(position_id)
-+  end
-+
-+  @doc """
-+  Automatically rebalances a position based on strategy.
-+  """
-+  @spec rebalance_position(String.t(), atom()) :: {:ok, Position.t()} | {:error, term()}
-+  def rebalance_position(position_id, strategy) do
-+    Position.rebalance(position_id, strategy)
-+  end
-+
-+  @doc """
-+  Calculates impermanent loss for a position.
-+  """
-+  @spec calculate_impermanent_loss(String.t()) :: {:ok, Decimal.t()} | {:error, term()}
-+  def calculate_impermanent_loss(position_id) do
-+    Position.impermanent_loss(position_id)
-+  end
-+end
---- a/lux/lib/lux/exchanges/uniswap_v3/position.ex
-+++ b/lux/lib/lux/exchanges/uniswap_v3/position.ex
-@@ -0,0 +1,298 @@
-+defmodule Lux.Exchanges.UniswapV3.Position do
-+  @moduledoc """
-+  Manages Uniswap V3 liquidity positions including creation,
-+  modification, fee collection, and health monitoring.
-+  """
-+
-+  use Ecto.Schema
-+  import Ecto.Changeset
-+
-+  alias Lux.Exchanges.UniswapV3.Pool
-+  alias Lux.Exchanges.UniswapV3.LiquidityMath
-+
-+  @primary_key {:id, :string, autogenerate: false}
-+  embedded_schema do
-+    field :owner, :string
-+    field :pool_address, :string
-+    field :token0, :string
-+    field :token1, :string
-+    field :fee_tier, :integer
-+    field :tick_lower, :integer
-+ "...field :tick_upper, :integer
-+    field :liquidity, :decimal
-+    field :tokens_owed0, :decimal, default: Decimal.new("0")
-+    field :tokens_owed1, :decimal, default: Decimal.new("0")
-+    field :fee_growth_inside0, :decimal, default: Decimal.new("0")
-+    field :fee_growth_inside1, :decimal, default: Decimal.new("0")
-+    field :price_lower, :decimal
-+    field :price_upper, :decimal
-+    field :entry_price, :decimal
-+    field :current_price, :decimal
-+    field :status, :string, default: "active"
-+    field :created_at, :utc_datetime
-+    field :updated_at, :utc_datetime
-+    field :last_rebalance_at, :utc_datetime
-+    field :total_fees_collected0, :decimal, default: Decimal.new("0")
-+    field :total_fees_collected1, :decimal, default: Decimal.new("0")
-+    field :impermanent_loss, :decimal, default: Decimal.new("0")
-+  end
-+
-+  @type t :: %__MODULE__{
-+    id: String.t(),
-+    owner: String.t(),
-+    pool_address: String.t(),
-+    token0: String.t(),
-+    token1: String.t(),
-+    fee_tier: integer(),
-+    tick_lower: integer(),
-+    tick_upper: integer(),
-+    liquidity: Decimal.t(),
-+    tokens_owed0: Decimal.t(),
-+    tokens_owed1: Decimal.t(),
-+    fee_growth_inside0: Decimal.t(),
-+    fee_growth_inside
++    with :ok <- validate_position_params(params),
++         {:ok, optimized_range} <- optimize_price_range(params),
++         params <- Map.merge(params, optimized_range) do
++      Position
