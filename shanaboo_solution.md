@@ -1,181 +1,162 @@
- ```diff
+ Looking at this issue, I need to implement a comprehensive Uniswap V3 integration for the Lux framework. Let me analyze the repository structure and create the necessary files.
+
+From the root listing, I can see this is an Lux framework with:
+- `lux/` - main library
+- `lux_app/` - application code
+
+The issue requires:
+1. Position creation and management
+2. Liquidity range optimization
+3. Fee collection and reinvestment
+4. Position health monitoring
+5. Automated position adjustment
+6. Documentation and examples
+7. Integration tests
+8. Performance monitoring dashboard
+
+Let me create the core Uniswap V3 integration files. Based on the Lux framework structure (Elixir), I'll create the necessary modules.
+
+```diff
 --- /dev/null
 +++ b/lux/lib/lux/exchanges/uniswap_v3.ex
-@@ -0,0 +1,1024 @@
+@@ -0,0 +1,218 @@
 +defmodule Lux.Exchanges.UniswapV3 do
 +  @moduledoc """
 +  Comprehensive Uniswap V3 integration for advanced liquidity management
 +  and optimal trading strategies.
-+
-+  ## Features
-+  - Concentrated liquidity management
-+  - Multi-pool position management
-+  - Price range optimization
-+  - Fee tier selection
-+  - Automated rebalancing
-+  - Impermanent loss protection
-+  - Position monitoring
-+  - Yield optimization
 +  """
 +
 +  alias Lux.Exchanges.UniswapV3.{
 +    Position,
 +    Pool,
 +    LiquidityRange,
-+    FeeCalculator,
-+    PriceOptimizer,
-+    Rebalancer,
-+    ImpermanentLoss,
++    FeeManager,
 +    PositionMonitor,
++    Rebalancer,
 +    YieldOptimizer
 +  }
-+
-+  require Logger
-+
-+  # ============================================================================
-+  # Types
-+  # ============================================================================
 +
 +  @type token_address :: String.t()
 +  @type pool_address :: String.t()
 +  @type position_id :: non_neg_integer()
 +  @type tick_range :: {integer(), integer()}
-+  @type liquidity_amount :: non_neg_integer()
 +  @type fee_tier :: 100 | 500 | 3000 | 10000
 +
-+  @type pool_params :: %{
-+          token0: token_address(),
-+          token1: token_address(),
-+          fee: fee_tier(),
-+          tick_spacing: integer()
-+        }
-+
-+  @type position_params :: %{
-+          pool: pool_address(),
-+          tick_lower: integer(),
-+          tick_upper: integer(),
-+          amount0_desired: non_neg_integer(),
-+          amount1_desired: non_neg_integer(),
-+          amount0_min: non_neg_integer(),
-+          amount1_min: non_neg_integer(),
-+          recipient: String.t(),
-+          deadline: non_neg_integer()
-+        }
-+
-+  @type liquidity_range :: %{
-+          lower_price: float(),
-+          upper_price: float(),
-+          current_price: float()
-+        }
-+
-+  @type position_state :: %{
-+          id: position_id(),
-+          pool: pool_address(),
-+          tick_lower: integer(),
-+          tick_upper: integer(),
-+          liquidity: liquidity_amount(),
-+          tokens_owed0: non_neg_integer(),
-+          tokens_owed1: non_neg_integer(),
-+          fee_growth_inside0_last_x128: non_neg_integer(),
-+          fee_growth_inside1_last_x128: non_neg_integer()
-+        }
-+
-+  @type pool_state :: %{
-+          address: pool_address(),
-+          token0: token_address(),
-+          token1: token_address(),
-+          fee: fee_tier(),
-+          tick_spacing: integer(),
-+          liquidity: non_neg_integer(),
-+          sqrt_price_x96: non_neg_integer(),
-+          tick: integer(),
-+          fee_growth_global0_x128: non_neg_integer(),
-+          fee_growth_global1_x128: non_neg_integer()
-+        }
-+
-+  @type rebalance_strategy :: :passive | :active | :aggressive
-+
-+  @type rebalance_config :: %{
-+          strategy: rebalance_strategy(),
-+          threshold_percent: float(),
-+          rebalance_interval: non_neg_integer(),
-+          max_slippage_percent: float()
-+        }
-+
-+  @type yield_metrics :: %{
-+          apr: float(),
-+          apy: float(),
-+          fee_earned_24h: float(),
-+          impermanent_loss_24h: float(),
-+          total_return_24h: float()
-+        }
-+
-+  # ============================================================================
-+  # Constants
-+  # ============================================================================
-+
-+  # Uniswap V3 contract addresses (mainnet)
-+  @factory_address "0x1F98431c8aD98523631aE4C8f3E8D0a34B8C3C1D"
-+  @position_manager_address "0xC36442b4a4522E871399CD717aBDD84711c13e5D"
-+  @quoter_address "0xb27308f9F90D6074630f8026f0fD0E0B02D50eEe"
-+
-+  # Fee tiers and their corresponding tick spacing
-+  @fee_tiers %{
-+    100 => 1,     # 0.01%
-+    500 => 10,    # 0.05%
-+    3000 => 60,   # 0.3  %
-+    10000 => 200  # 1%
-+  }
-+
-+  # Q96 constant for price calculations
-+  @q96 0x1000000000000000000000000
-+
-+  # ============================================================================
-+  # Public API - Pool Operations
-+  # ============================================================================
++  # Fee tier constants (basis points)
++  @fee_tier_low 100      # 0.01% - stable pairs
++  @fee_tier_medium 500   # 0.05% - stable pairs
++  @fee_tier_standard 3000 # 0.3% - standard pairs
++  @fee_tier_high 10000   # 1% - exotic pairs
 +
 +  @doc """
-+  Creates a new Uniswap V3 pool for the given token pair and fee tier.
++  Creates a new concentrated liquidity position.
 +  """
-+  @spec create_pool(token_address(), token_address(), fee_tier()) ::
-+          {:ok, pool_address()} | {:error, term()}
-+  def create_pool(token0, token1, fee) do
-+    with :ok <- validate_fee_tier(fee),
-+         :ok <- validate_token_pair(token0, token1),
-+         {:ok, tick_spacing} <- Map.fetch(@fee_tiers, fee) do
-+      Pool.create(token0, token1, fee, tick_spacing)
++  @spec create_position(
++    token0 :: token_address(),
++    token1 :: token_address(),
++    fee_tier :: fee_tier(),
++    lower_tick :: integer(),
++    upper_tick :: integer(),
++    amount0_desired :: non_neg_integer(),
++    amount1_desired :: non_neg_integer(),
++    options :: keyword()
++  ) :: {:ok, Position.t()} | {:error, term()}
++  def create_position(token0, token1, fee_tier, lower_tick, upper_tick, amount0_desired, amount1_desired, options \\ []) do
++    with :ok <- validate_tokens(token0, token1),
++         :ok <- validate_fee_tWideRange(fee_tier),
++         :ok <- validate_tick_range(lower_tick, upper_tick),
++         {:ok, pool} <- get_or_create_pool(token0, token1, fee_tier),
++         {:ok, position} <- Position.create(%{
++           pool: pool,
++           lower_tick: lower_tick,
++           upper_tick: upper_tick,
++           amount0_desired: amount0_desired,
++           amount1_desired: amount1_desired,
++           slippage_tolerance: Keyword.get(options, :slippage_tolerance, 0.005),
++           deadline: Keyword.get(options, :deadline, default_deadline())
++         }) do
++      PositionMonitor.track(position)
++      {:ok, position}
 +    end
 +  end
 +
 +  @doc """
-+  Gets the current state of a pool.
++  Creates a position with optimized price range based on volatility analysis.
 +  """
-+  @spec get_pool_state(pool_address()) :: {:ok, pool_state()} | {:error, term()}
-+  def get_pool_state(pool_address) do
-+    Pool.get_state(pool_address)
++  @spec create_optimized_position(
++    token0 :: token_address(),
++    token1 :: token_address(),
++    fee_tier :: fee_tier(),
++    options :: keyword()
++  ) :: {:ok, Position.t()} | {:error, term()}
++  def create_optimized_position(token0, token1, fee_tier, options \\ []) do
++    with {:ok, optimal_range} <- LiquidityRange.optimize(token0, token1, fee_tier, options),
++         {:ok, position} <- create_position(
++           token0,
++           token1,
++           optimal_range.fee_tier,
++           optimal_range.lower_tick,
++           optimal_range.upper_tick,
++           Keyword.get(options, :amount0, 0),
++           Keyword.get(options, :amount1, 0),
++           options
++         ) do
++      {:ok, position}
++    end
 +  end
 +
 +  @doc """
-+  Calculates the optimal fee tier for a given token pair based on
-+  volatility and volume metrics.
++  Collects fees for a position and optionally reinvests them.
 +  """
-+  @spec optimize_fee_tier(token_address(), token_address(), map()) ::
-+          {:ok, fee_tier()} | {:error, term()}
-+  def optimize_fee_tier(token0, token1, metrics) do
-+    FeeCalculator.optimize_tier(token0, token1, metrics)
++  @spec collect_fees(position_id :: position_id(), options :: keyword()) ::
++    {:ok, %{amount0: non_neg_integer(), amount1: non_neg_integer()}} | {:error, auto_reinvest :: boolean()}
++  def collect_fees(position_id, options \\ []) do
++    with {:ok, position} <- Position.get(position_id),
++         {:ok, fees} <- FeeManager.collect(position) do
++      if Keyword.get(options, :auto_reinvest, false) and fees_above_threshold?(fees) do
++        reinvest_fees(position, fees)
++      else
++        {:ok, fees}
++      end
++    end
++  fees
 +  end
 +
-+  # ============================================================================
-+  # Public API - Position Management
-+  # ============================================================================
++  @doc """
++  Adjusts position based on market conditions and configured strategy.
++  """
++  @spec adjust_position(position_id :: position_id(), strategy :: atom()) ::
++    {:ok, Position.t()} | {:error, term()}
++  def adjust_position(position_id, strategy \\ :default) do
++    with {:ok, position} <- Position.get(position_id),
++         {:ok, adjusted} <- Rebalancer.rebalance(position, strategy) do
++      PositionMonitor.update(adjusted)
++      {:ok, adjusted}
++    end
++  end
 +
 +  @doc """
-+  Creates a new liquidity position in a Uniswap V3 pool.
++  Gets position health metrics.
 +  """
-+  @spec create_position(position_params()) ::
-+          {:ok, position_state()} | {:error, term()}
-+  def create_position(params) do
-+    with :ok <- validate_position_params(params),
-+         {:ok, optimized_range} <- optimize_price_range(params),
-+         params <- Map.merge(params, optimized_range) do
-+      Position
++  @spec position_health(position_id :: position_id()) ::
++    {:ok, PositionMonitor.health_metrics()} | {:error, term()}
++  def position_health(position_id) do
++    PositionMonitor.get_health(position_id)
++  end
++
++  @doc """
++  Gets yield optimization suggestions for a position.
++  """
++  @spec get_yield_optimization(position_id :: position_id()) ::
++    {:ok, YieldOptimizer.suggestions()} | {:error, term()}
++  def get_yield_optimization(position_id) do
++    with {:ok, position} <- Position.get(position_id) do
++      YieldOptimizer.analyze(position)
++    end
++  end
++
++  @doc """
++  Gets the optimal fee tier for a token pair based on volatility and volume.
++  """
++  @spec optimal_fee_tier(token0 :: token_address(), token1 :: token_address()) ::
++    {:ok, fee
