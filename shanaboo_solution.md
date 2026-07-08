@@ -1,179 +1,199 @@
  ```diff
---- a/lux/lib/lux/llm/ollama.ex
-+++ b/lux/llm/ollama.ex
-@@ -0,0 +1,200 @@
+--- /dev/null
++++ b/lux/lib/lux/llm/ollama.ex
+@@ -0,0 +1,316 @@
 +defmodule Lux.LLM.Ollama do
 +  @moduledoc """
 +  Ollama client for local LLM support.
-+  Provides integration with Ollama API for running local models.
++
++  Provides integration with Ollama API for running local models,
++  with support for model management, caching, and resource controls.
 +  """
 +
 +  require Logger
 +
 +  @default_base_url "http://localhost:11434"
 +  @default_timeout 300_000
-+  @default_model "llama3"
++  @default_connect_timeout 30_000
 +
-+  defstruct [
-+    :base_url,
-+    :model,
-+    :timeout,
-+    :stream
-+  ]
++  @type model_name :: String.t()
++  @type prompt :: String.t()
++  @type options :: keyword()
++  @type response :: {:ok, map()} | {:error, term()}
 +
-+  @type t :: %__MODULE__{
-+          base_url: String.t(),
-+          model: String.t(),
-+          timeout: non_neg_integer(),
-+          stream: boolean()
-+        }
++  defmodule Config do
++    @moduledoc """
++    Configuration for Ollama client.
++    """
 +
-+  @doc """
-+  Creates a new Ollama client configuration.
++    defstruct [
++      :base_url,
++      :timeout,
++      :connect_timeout,
++      :default_model,
++      :cache_enabled,
++      :max_memory_mb,
++      :max_concurrent_requests
++    ]
 +
-+  ## Options
-+    * `:base_url` - Ollama API base URL (default: http://localhost:11434)
-+    * `:model` - Model name to use (default: llama3)
-+    * `:timeout` - Request timeout in milliseconds (default: 300000)
-+    * `:stream` - Whether to stream responses (default: false)
-+  """
-+  @spec new(keyword()) :: t()
-+  def new(opts \\ []) do
-+    %__MODULE__{
-+      base_url: Keyword.get(opts, :base_url, @default_base_url),
-+      model: Keyword.get(opts, :model, @default_model),
-+      timeout: Keyword.get(opts, :timeout, @default_timeout),
-+      stream: Keyword.get(opts, :stream, false)
-+    }
++    @type t :: %__MODULE__{
++            base_url: String.t(),
++            timeout: non_neg_integer(),
++            connect_timeout: non_neg_integer(),
++            default_model: String.t() | nil,
++            cache_enabled: boolean(),
++            max_memory_mb: non_neg_integer() | nil,
++            max_concurrent_requests: pos_integer() | nil
++          }
 +  end
 +
 +  @doc """
-+  Generates a completion using the configured model.
++  Returns the default configuration.
 +  """
-+  @spec completion(t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
-+  def completion(client, prompt, opts \\ []) do
++  @spec default_config() :: Config.t()
++  def default_config do
++    %Config{
++      base_url: System.get_env("OLLAMA_BASE_URL", @default_base_url),
++      timeout: parse_env_integer("OLLAMA_TIMEOUT", @default_timeout),
++      connect_timeout: parse_env_integer("OLLAMA_CONNECT_TIMEOUT", @default_connect_timeout),
++      default_model: System.get_env("OLLAMA_DEFAULT_MODEL"),
++      cache_enabled: parse_env_boolean("OLLAMA_CACHE_ENABLED", true),
++      max_memory_mb: parse_env_integer("OLLAMA_MAX_MEMORY_MB", nil),
++      max_concurrent_requests: parse_env_integer("OLLAMA_MAX_CONCURRENT_REQUESTS", 4)
++    }
++  end
++
++  defp parse_env_integer(key, default) do
++    case System.get_env(key) do
++      nil -> default
++      val -> String.to_integer(val)
++    end
++  end
++
++  defp parse_env_boolean(key, default) do
++    case System.get_env(key) do
++      nil -> default
++      "true" -> true
++      "1" -> true
++      _ -> false
++    end
++  end
++
++  @doc """
++  Generates a completion using the specified model.
++  """
++  @spec completion(model_name(), prompt(), options()) :: response()
++  def completion(model, prompt, options \\ []) do
++    config = Keyword.get(options, :config, default_config())
++    cache_key = generate_cache_key(model, prompt, options)
++
++    with :ok <- check_resource_limits(config),
++         {:ok, cached} <- maybe_get_cached(cache_key, config) do
++      case cached do
++        nil ->
++          do_completion(model, prompt, options, config, cache_key)
++
++        result ->
++          {:ok, result}
++      end
++    end
++  end
++
++  defp do_completion(model, prompt, options, config, cache_key) do
 +    body = %{
-+      model: client.model,
++      model: model,
 +      prompt: prompt,
-+      stream: client.stream,
-+      options: opts[:options] || %{}
++      stream: false,
++      options: build_options(options)
 +    }
 +
-+    request(client, "/api/generate", body)
++    start_time = System.monotonic_time()
++
++    result = post("/api/generate", body, config)
++
++    end_time = System.monotonic_time()
++    duration_ms = System.convert_time_unit(end_time - start_time, :native, :millisecond)
++
++    case result do
++      {:ok, response} ->
++        maybe_cache_result(cache_key, response, config)
++        log_performance(model, duration_ms, byte_size(prompt))
++        {:ok, response}
++
++      error ->
++        error
++    end
 +  end
 +
 +  @doc """
-+  Generates a chat completion using the configured model.
++  Generates a chat completion using the specified model.
 +  """
-+  @spec chat(t(), list(map()), keyword()) :: {:ok, map()} | {:error, term()}
-+  def chat(client, messages, opts \\ []) do
-+    body = %{
-+      model: client.model,
-+      messages: messages,
-+      stream: client.stream,
-+      options: opts[:options] || %{}
-+    }
++  @spec chat(model_name(), list(map()), options()) :: response()
++  def chat(model, messages, options \\ []) do
++    config = Keyword.get(options, :config, default_config())
 +
-+    request(client, "/api/chat", body)
++    with :ok <- check_resource_limits(config) do
++      body = %{
++        model: model,
++        messages: messages,
++        stream: false,
++        options: build_options(options)
++      }
++
++      post("/api/chat", body, config)
++    end
++  end
++
++  @doc """
++  Lists available models.
++  """
++  @spec list_models() :: response()
++  def list_models(options \\ []) do
++    config = Keyword.get(options, :config, default_config())
++    get("/api/tags", config)
 +  end
 +
 +  @doc """
 +  Pulls a model from the Ollama library.
 +  """
-+  @spec pull_model(t(), String.t()) :: {:ok, map()} | {:error, term()}
-+  def pull_model(client, model_name) do
-+    body = %{
-+      name: model_name,
-+      stream: false
-+    }
-+
-+    request(client, "/api/pull", body)
++  @spec pull_model(model_name()) :: response()
++  def pull_model(model, options \\ []) do
++    config = Keyword.get(options, :config, default_config())
++    post("/api/pull", %{name: model, stream: false}, config)
 +  end
 +
 +  @doc """
-+  Lists locally available models.
++  Deletes a model.
 +  """
-+  @spec list_local_models(t()) :: {:ok, list(map())} | {:error, term()}
-+  def list_local_models(client) do
-+    case request(client, "/api/tags", nil, :get) do
-+      {:ok, %{"models" => models}} -> {:ok, models}
-+      {:ok, response} -> {:ok, response}
-+      error -> error
-+    end
-+  end
-+
-+  @doc """
-+  Deletes a local model.
-+  """
-+  @spec delete_model(t(), String.t()) :: {:ok, map()} | {:error, term()}
-+  def delete_model(client, model_name) do
-+    body = %{name: model_name}
-+    request(client, "/api/delete", body, :delete)
++  @spec delete_model(model_name()) :: response()
++  def delete_model(model, options \\ []) do
++    config = Keyword.get(options, :config, default_config())
++    delete("/api/delete", %{name: model}, config)
 +  end
 +
 +  @doc """
 +  Shows model information.
 +  """
-+  @spec show_model(t(), String.t()) :: {:ok, map()} | {:error, term()}
-+  def show_model(client, model_name) do
-+    body = %{name: model_name}
-+    request(client, "/api/show", body)
++  @spec show_model(model_name()) :: response()
++  def show_model(model, options \\ []) do
++    config = Keyword.get(options, :config, default_config())
++    post("/api/show", %{name: model}, config)
 +  end
 +
 +  @doc """
-+  Checks if Ollama server is running.
++  Checks if Ollama is running and accessible.
 +  """
-+  @spec health_check(t()) :: :ok | {:error, term()}
-+  def health_check(client) do
-+    case HTTPoison.get("#{client.base_url}/api/tags", [], timeout: 5000, recv_timeout: 5000) do
-+      {:ok, %{status_code: 200}} -> :ok
-+      {:ok, %{status_code: status}} -> {:error, "Unexpected status: #{status}"}
-+      {:error, reason} -> {:error, reason}
++  @spec health_check() :: :ok | {:error, term()}
++  def health_check(options \\ []) do
++    config = Keyword.get(options, :config, default_config())
++
++    case get("/api/tags", config) do
++      {:ok, _} -> :ok
++      error -> error
 +    end
 +  end
 +
 +  # Private functions
 +
-+  defp request(client, path, body, method \\ :post) do
-+    url = client.base_url <> path
-+    headers = [{"Content-Type", "application/json"}]
-+
-+    opts = [
-+      timeout: client.timeout,
-+      recv_timeout: client.timeout
-+    ]
-+
-+    response =
-+      case method do
-+        :get -> HTTPoison.get(url, headers, opts)
-+        :delete -> HTTPoison.delete(url, headers, opts)
-+        _ -> HTTPoison.post(url, Jason.encode!(body), headers, opts)
-+      end
-+
-+    case response do
-+      {:ok, %{status_code: status, body: resp_body}} when status in 200..299 ->
-+        case Jason.decode(resp_body) do
-+          {:ok, decoded} -> {:ok, decoded}
-+          {:error, _} -> {:ok, %{"response" => resp_body}}
-+        end
-+
-+      {:ok, %{status_code: status, body: resp_body}} ->
-+        {:error, %{status: status, body: resp_body}}
-+
-+      {:error, reason} ->
-+        {:error, reason}
-+    end
-+  end
-+end
---- a/lux/lib/lux/llm/ollama/model_manager.ex
-+++ b/lux/lib/lux/llm/ollama/model_manager.ex
-@@ -0,0 +1,200 @@
-+defmodule Lux.LLM.Ollama.ModelManager do
-+  @moduledoc """
-+  Manages Ollama models including download, caching, and resource controls.
-+  """
-+
-+  use GenServer
-+  require Logger
-+
-+  alias Lux.LLM.O
++  defp build_options(options) do
++    allowed = [:temperature, :num_ctx
