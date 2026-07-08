@@ -1,182 +1,179 @@
  ```diff
---- /dev/null
-+++ b/lux/lib/lux/llm/ollama.ex
-@@ -0,0 +1,268 @@
+--- a/lux/lib/lux/llm/ollama.ex
++++ b/lux/llm/ollama.ex
+@@ -0,0 +1,200 @@
 +defmodule Lux.LLM.Ollama do
 +  @moduledoc """
 +  Ollama client for local LLM support.
-+
-+  Provides integration with Ollama's API for running local models,
-+  with support for model management, caching, and resource controls.
++  Provides integration with Ollama API for running local models.
 +  """
 +
 +  require Logger
 +
-+  alias Lux.LLM.Ollama.Model
-+  alias Lux.LLM.Ollama.Cache
-+
 +  @default_base_url "http://localhost:11434"
 +  @default_timeout 300_000
-+  @default_max_tokens 2048
-+  @default_temperature 0.7
++  @default_model "llama3"
 +
 +  defstruct [
 +    :base_url,
 +    :model,
-+    :temperature,
-+    :max_tokens,
 +    :timeout,
-+    :stream,
-+    :format,
-+    :options
++    :stream
 +  ]
 +
 +  @type t :: %__MODULE__{
 +          base_url: String.t(),
 +          model: String.t(),
-+          temperature: float(),
-+          max_tokens: integer(),
-+          timeout: integer(),
-+          stream: boolean(),
-+          format: map() | nil,
-+          options: map()
++          timeout: non_neg_integer(),
++          stream: boolean()
 +        }
 +
 +  @doc """
 +  Creates a new Ollama client configuration.
 +
 +  ## Options
-+
 +    * `:base_url` - Ollama API base URL (default: http://localhost:11434)
-+    * `:model` - Model name to use (required)
-+    * `:temperature` - Sampling temperature (default: 0.7)
-+    * `:max_tokens` - Maximum tokens to generate (default: 2048)
++    * `:model` - Model name to use (default: llama3)
 +    * `:timeout` - Request timeout in milliseconds (default: 300000)
 +    * `:stream` - Whether to stream responses (default: false)
-+    * `:format` - JSON schema for structured output (default: nil)
-+    * `:options` - Additional Ollama options (default: %{})
-+
-+  ## Examples
-+
-+      iex> Lux.LLM.Ollama.new(model: "llama3.2")
-+      %Lux.LLM.Ollama{base_url: "http://localhost:11434", model: "llama3.2", ...}
 +  """
 +  @spec new(keyword()) :: t()
 +  def new(opts \\ []) do
-+    base_url = opts[:base_url] || System.get_env("OLLAMA_BASE_URL", @default_base_url)
-+
 +    %__MODULE__{
-+      base_url: base_url,
-+      model: opts[:model] || raise(ArgumentError, "model option is required"),
-+      temperature: opts[:temperature] || @default_temperature,
-+      max_tokens: opts[:max_tokens] || @default_max_tokens,
-+      timeout: opts[:timeout] || @default_timeout,
-+      stream: opts[:stream] || false,
-+      format: opts[:format],
++      base_url: Keyword.get(opts, :base_url, @default_base_url),
++      model: Keyword.get(opts, :model, @default_model),
++      timeout: Keyword.get(opts, :timeout, @default_timeout),
++      stream: Keyword.get(opts, :stream, false)
++    }
++  end
++
++  @doc """
++  Generates a completion using the configured model.
++  """
++  @spec completion(t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
++  def completion(client, prompt, opts \\ []) do
++    body = %{
++      model: client.model,
++      prompt: prompt,
++      stream: client.stream,
 +      options: opts[:options] || %{}
 +    }
++
++    request(client, "/api/generate", body)
 +  end
 +
 +  @doc """
-+  Sends a chat completion request to Ollama.
-+
-+  ## Examples
-+
-+      iex> client = Lux.LLM.Ollama.new(model: "llama3.2")
-+      iex> Lux.LLM.Ollama.chat(client, [%{role: "user", content: "Hello!"}])
-+      {:ok, %{message: %{role: "assistant", content: "Hi there!"}}}
++  Generates a chat completion using the configured model.
 +  """
 +  @spec chat(t(), list(map()), keyword()) :: {:ok, map()} | {:error, term()}
-+  def chat(client, messages, _opts \\ []) do
-+    body = build_chat_request(client, messages)
-+
-+    case post(client, "/api/chat", body) do
-+      {:ok, response} ->
-+        {:ok, parse_chat_response(response)}
-+
-+      {:error, reason} ->
-+        {:error, reason}
-+    end
-+  end
-+
-+  @doc """
-+  Streams a chat completion request to Ollama.
-+
-+  Returns a stream of response chunks.
-+  """
-+  @spec stream_chat(t(), list(map()), keyword()) :: Enumerable.t()
-+  def stream_chat(client, messages, _opts \\ []) do
-+    body =
-+      client
-+      |> build_chat_request(messages)
-+      |> Map.put("stream", true)
-+
-+    Stream.resource(
-+      fn -> body end,
-+      fn _ ->
-+        case post(client, "/api/chat", body) do
-+          {:ok, response} ->
-+            {[response], nil}
-+
-+          {:error, _reason} ->
-+            {:halt, nil}
-+        end
-+      end,
-+      fn _ -> :ok end
-+    )
-+  end
-+
-+  @doc """
-+  Generates a completion using the specified model.
-+
-+  ## Examples
-+
-+      iex> client = Lux.LLM.Ollama.new(model: "llama3.2")
-+      iex> Lux.LLM.Ollama.generate(client, "Once upon a time")
-+      {:ok, %{response: "..."}}
-+  """
-+  @spec generate(t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
-+  def generate(client, prompt, _opts \\ []) do
++  def chat(client, messages, opts \\ []) do
 +    body = %{
-+      "model" => client.model,
-+      "prompt" => prompt,
-+      "options" => build_options(client),
-+      "stream" => false
++      model: client.model,
++      messages: messages,
++      stream: client.stream,
++      options: opts[:options] || %{}
 +    }
 +
-+    case post(client, "/api/generate", body) do
-+      {:ok, response} ->
-+        {:ok, parse_generate_response(response)}
-+
-+      {:error, reason} ->
-+        {:error, reason}
-+    end
-+  end
-+
-+  @doc """
-+  Checks if the Ollama server is available.
-+  """
-+  @spec available?(t()) :: boolean()
-+  def available?(client) do
-+    case get(client, "/api/tags") do
-+      {:ok, _} -> true
-+      _ -> false
-+    end
-+  end
-+
-+  @doc """
-+  Lists available models on the Ollama server.
-+  """
-+  @spec list_models(t()) :: {:ok, list(map())} | {:error, term()}
-+  def list_models(client) do
-+    case get(client, "/api/tags") do
-+      {:ok, %{"models" => models}} -> {:ok, models}
-+      {:ok, response} -> {:ok, response}
-+      {:error, reason} -> {:error, reason}
-+    end
++    request(client, "/api/chat", body)
 +  end
 +
 +  @doc """
 +  Pulls a model from the Ollama library.
 +  """
-+ 
++  @spec pull_model(t(), String.t()) :: {:ok, map()} | {:error, term()}
++  def pull_model(client, model_name) do
++    body = %{
++      name: model_name,
++      stream: false
++    }
++
++    request(client, "/api/pull", body)
++  end
++
++  @doc """
++  Lists locally available models.
++  """
++  @spec list_local_models(t()) :: {:ok, list(map())} | {:error, term()}
++  def list_local_models(client) do
++    case request(client, "/api/tags", nil, :get) do
++      {:ok, %{"models" => models}} -> {:ok, models}
++      {:ok, response} -> {:ok, response}
++      error -> error
++    end
++  end
++
++  @doc """
++  Deletes a local model.
++  """
++  @spec delete_model(t(), String.t()) :: {:ok, map()} | {:error, term()}
++  def delete_model(client, model_name) do
++    body = %{name: model_name}
++    request(client, "/api/delete", body, :delete)
++  end
++
++  @doc """
++  Shows model information.
++  """
++  @spec show_model(t(), String.t()) :: {:ok, map()} | {:error, term()}
++  def show_model(client, model_name) do
++    body = %{name: model_name}
++    request(client, "/api/show", body)
++  end
++
++  @doc """
++  Checks if Ollama server is running.
++  """
++  @spec health_check(t()) :: :ok | {:error, term()}
++  def health_check(client) do
++    case HTTPoison.get("#{client.base_url}/api/tags", [], timeout: 5000, recv_timeout: 5000) do
++      {:ok, %{status_code: 200}} -> :ok
++      {:ok, %{status_code: status}} -> {:error, "Unexpected status: #{status}"}
++      {:error, reason} -> {:error, reason}
++    end
++  end
++
++  # Private functions
++
++  defp request(client, path, body, method \\ :post) do
++    url = client.base_url <> path
++    headers = [{"Content-Type", "application/json"}]
++
++    opts = [
++      timeout: client.timeout,
++      recv_timeout: client.timeout
++    ]
++
++    response =
++      case method do
++        :get -> HTTPoison.get(url, headers, opts)
++        :delete -> HTTPoison.delete(url, headers, opts)
++        _ -> HTTPoison.post(url, Jason.encode!(body), headers, opts)
++      end
++
++    case response do
++      {:ok, %{status_code: status, body: resp_body}} when status in 200..299 ->
++        case Jason.decode(resp_body) do
++          {:ok, decoded} -> {:ok, decoded}
++          {:error, _} -> {:ok, %{"response" => resp_body}}
++        end
++
++      {:ok, %{status_code: status, body: resp_body}} ->
++        {:error, %{status: status, body: resp_body}}
++
++      {:error, reason} ->
++        {:error, reason}
++    end
++  end
++end
+--- a/lux/lib/lux/llm/ollama/model_manager.ex
++++ b/lux/lib/lux/llm/ollama/model_manager.ex
+@@ -0,0 +1,200 @@
++defmodule Lux.LLM.Ollama.ModelManager do
++  @moduledoc """
++  Manages Ollama models including download, caching, and resource controls.
++  """
++
++  use GenServer
++  require Logger
++
++  alias Lux.LLM.O
