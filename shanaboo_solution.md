@@ -1,159 +1,208 @@
-```diff
+ ```diff
 --- a/lux/lib/lux/llm/ollama.ex
 +++ b/lux/lib/lux/llm/ollama.ex
 @@ -0,0 +1,312 @@
 +defmodule Lux.LLM.Ollama do
 +  @moduledoc """
-+  Ollama LLM integration for local model support.
++  Ollama LLM client for local model support.
 +
-+  Provides a client for interacting with Ollama's API to run
-+  local LLMs with support for chat completions, embeddings,
-+  and model management.
++  Provides integration with Ollama API for running local LLMs.
++  See https://github.com/ollama/ollama/blob/main/docs/api.md
 +  """
 +
-+  alias Lux.Config
++  alias Lux.LLM.Response
 +
-+  require Logger
++  @behaviour Lux.LLM
 +
-+  @default_base_url "http://localhost:11434"
++  @default_endpoint "http://localhost:11434"
 +  @default_timeout 300_000
-+  @default_model "llama3.2"
++  @default_max_tokens 2048
 +
 +  @type t :: %__MODULE__{
-+          base_url: String.t(),
++          endpoint: String.t(),
 +          model: String.t(),
-+          timeout: non_neg_integer(),
-+          temperature: float() | nil,
-+          max_tokens: non_neg_integer() | nil,
-+          top_p: float() | nil,
-+          top_k: non_neg_integer() | nil,
-+          seed: non_neg_integer() | nil,
++          temperature: float(),
++          max_tokens: integer(),
++          timeout: integer(),
 +          system: String.t() | nil,
++          stream: boolean(),
 +          format: map() | nil,
-+          http_client: module()
++          options: map()
 +        }
 +
 +  defstruct [
-+    :base_url,
++    :endpoint,
 +    :model,
-+    :timeout,
 +    :temperature,
 +    :max_tokens,
-+    :top_p,
-+    :top_k,
-+    :seed,
++    :timeout,
 +    :system,
++    :stream,
 +    :format,
-+    :http_client
++    :options
 +  ]
 +
-+  @doc """
-+  Creates a new Ollama client configuration.
-+
-+  ## Options
-+
-+  - `:base_url` - Ollama API base URL (default: `#{@default_base_url}`)
-+  - `:model` - Model name to use (default: `#{@default_model}`)
-+  - `:timeout` - Request timeout in milliseconds (default: `#{@default_timeout}`)
-+  - `:temperature` - Sampling temperature
-+  - `:max_tokens` - Maximum tokens to generate
-+  - `:top_p` - Nucleus sampling parameter
-+  - `:top_k` - Top-k sampling parameter
-+  - `:seed` - Random seed for reproducibility
-+  - `:system` - System prompt
-+  - `:format` - Response format (e.g., `%{type: "json"}`)
-+  - `:http_client` - HTTP client module (default: `Req`)
-+
-+  ## Examples
-+
-+      iex> Lux.LLM.Ollama.new(model: "llama3.2")
-+      %Lux.LLM.Ollama{model: "llama3.2", base_url: "http://localhost:11434", ...}
-+  """
-+  @spec new(keyword()) :: t()
++  @impl true
 +  def new(opts \\ []) do
 +    %__MODULE__{
-+      base_url: opts[:base_url] || default_base_url(),
-+      model: opts[:model] || @default_model,
++      endpoint: opts[:endpoint] || default_endpoint(),
++      model: opts[:model] || default_model(),
++      temperature: opts[:temperature] || 0.7,
++      max_tokens: opts[:max_tokens] || @default_max_tokens,
 +      timeout: opts[:timeout] || @default_timeout,
-+      temperature: opts[:temperature],
-+      max_tokens: opts[:max_tokens],
-+      top_p: opts[:top_p],
-+      top_k: opts[:top_k],
-+      seed: opts[:seed],
 +      system: opts[:system],
++      stream: opts[:stream] || false,
 +      format: opts[:format],
-+      http_client: opts[:http_client] || Req
++      options: opts[:options] || %{}
 +    }
 +  end
 +
-+  @doc """
-+  Generates a chat completion using the Ollama API.
++  @impl true
++  def call(messages, config) do
++    config = config || new()
 +
-+  ## Parameters
++    body = build_request_body(messages, config)
 +
-+  - `client` - Ollama client configuration
-+  - `messages` - List of message maps with `:role` and `:content` keys
-+  - `opts` - Additional options to override client settings
++    headers = [
++      {"Content-Type", "application/json"}
++    ]
 +
-+  ## Examples
++    url = "#{config.endpoint}/api/chat"
 +
-+      iex> client = Lux.LLM.Ollama.new(model: "llama3.2")
-+      iex> messages = [%{role: "user", content: "Hello!"}]
-+      iex> Lux.LLM.Ollama.chat(client, messages)
-+      {:ok, %{message: %{role: "assistant", content: "Hello! How can I help?"}, ...}}
-+  """
-+  @spec chat(t(), list(map()), keyword()) ::
-+          {:ok, map()} | {:error, String.t()} | {:error, non_neg_integer(), String.t()}
-+  def chat(client, messages, opts \\ []) do
-+    url = "#{client.base_url}/api/chat"
++    start_time = System.monotonic_time(:millisecond)
 +
-+    body =
-+      %{
-+        model: opts[:model] || client.model,
-+        messages: messages,
-+        stream: false
-+      }
-+      |> maybe_put(:temperature, opts[:temperature] || client.temperature)
-+      |> maybe_put(:num_predict, opts[:max_tokens] || client.max_tokens)
-+      |> maybe_put(:top_p, opts[:top_p] || client.top_p)
-+      |> maybe_put(:top_k, opts[:top_k] || client.top_k)
-+      |> maybe_put(:seed, opts[:seed] || client.seed)
-+      |> maybe_put(:system, opts[:system] || client.system)
-+      |> maybe_put(:format, opts[:format] || client.format)
++    case HTTPoison.post(url, Jason.encode!(body), headers,
++           recv_timeout: config.timeout,
++           timeout: config.timeout
++         ) do
++      {:ok, %{status_code: 200, body: response_body}} ->
++        response = Jason.decode!(response_body)
++        end_time = System.monotonic_time(:millisecond)
++        latency_ms = end_time - start_time
 +
-+    case request(client, :post, url, json: body) do
-+      {:ok, %{status: 200, body: body}} ->
-+        {:ok, body}
++        {:ok, parse_response(response, latency_ms)}
 +
-+      {:ok, %{status: status, body: body}} when is_map(body) ->
-+        {:error, status, body["error"] || "Unknown error"}
++      {:ok, %{status_code: status_code, body: response_body}} ->
++        error =
++          try do
++            Jason.decode!(response_body)
++          rescue
++            _ -> %{"error" => response_body}
++          end
 +
-+      {:ok, %{status: status, body: body}} ->
-+        {:error, status, to_string(body)}
++        {:error, %{status: status_code, error: error}}
 +
-+      {:error, reason} ->
-+        {:error, inspect(reason)}
++      {:error, %HTTPoison.Error{reason: reason}} ->
++        {:error, %{reason: reason}}
 +    end
 +  end
 +
 +  @doc """
-+  Generates embeddings for the given text using Ollama.
-+
-+  ## Parameters
-+
-+  - `client` - Ollama client configuration
-+  - `input` - Text or list of texts to embed
-+  - `opts` - Additional options
-+
-+  ## Examples
-+
-+      iex> client = Lux.LLM.Ollama.new(model: "nomic-embed-text")
-+      iex> Lux.LLM.Ollama.embeddings(client, "Hello world")
-+      {:ok, %{embeddings: [[0.1, 0.2, ...]]}}
++  Streams a chat completion from Ollama.
 +  """
-+  @spec embeddings(t(), String.t() | list(String.t()), keyword()) ::
-+          {:ok, map()} | {:error, String.t()} | {:error, non_neg_integer(), String.t()}
-+  def embeddings(client, input, opts \\ []) do
-+    url = "#{client.base_url}/api/embed"
++  def stream(messages, config, callback) do
++    config = config || new()
 +
-+    inputs = if is_list(input
++    body =
++      build_request_body(messages, config)
++      |> Map.put(:stream, true)
++
++    headers = [
++      {"Content-Type", "application/json"}
++    ]
++
++    url = "#{config.endpoint}/api/chat"
++
++    start_time = System.monotonic_time(:millisecond)
++
++    HTTPoison.post!(
++      url,
++      Jason.encode!(body),
++      headers,
++      stream_to: self(),
++      async: :once,
++      recv_timeout: config.timeout,
++      timeout: config.timeout
++    )
++
++    stream_response(start_time, callback, "")
++  end
++
++  defp stream_response(start_time, callback, accumulated) do
++    receive do
++      %HTTPoison.AsyncChunk{chunk: chunk} ->
++        {new_accumulated, done} = process_stream_chunk(chunk, accumulated, callback)
++
++        if done do
++          end_time = System.monotonic_time(:millisecond)
++          latency_ms = end_time - start_time
++          {:ok, latency_ms}
++        else
++          stream_response(start_time, callback, new_accumulated)
++        end
++
++      %HTTPoison.AsyncEnd{} ->
++        end_time = System.monotonic_time(:millisecond)
++        latency_ms = end_time - start_time
++        {:ok, latency_ms}
++
++      %HTTPoison.AsyncStatus{code: status} when status != 200 ->
++        {:error, %{status: status}}
++
++      %HTTPoison.AsyncHeaders{} ->
++        stream_response(start_time, callback, accumulated)
++    after
++      30_000 ->
++        {:error, :timeout}
++    end
++  end
++
++  defp process_stream_chunk(chunk, accumulated, callback) do
++    data = accumulated <> chunk
++
++    case String.split(data, "\n", parts: 2) do
++      [line, rest] ->
++        case Jason.decode(line) do
++          {:ok, %{"message" => %{"content" => content}, "done" => false} = _response} ->
++            callback.({:chunk, content})
++            {rest, false}
++
++          {:ok, %{"done" => true} = _response} ->
++            callback.(:done)
++            {rest, true}
++
++          _ ->
++            {rest, false}
++        end
++
++      _ ->
++        {data, false}
++    end
++  end
++
++  @doc """
++  Generates embeddings using Ollama.
++  """
++  def embeddings(text, opts \\ []) do
++    config = new(opts)
++
++    body = %{
++      model: opts[:embedding_model] || config.model,
++      prompt: text
++    }
++
++    headers = [
++      {"Content-Type", "application/json"}
++    ]
++
++    url = "#{config.endpoint}/api/embeddings"
++
++    case HTTPoison.post(url, Jason.encode!(body), headers,
++           recv_timeout: config.timeout,
++           timeout: config.timeout
++         ) do
++      {:ok, %{status_code: 200, body: response_body}} ->
++        response = Jason.decode!(response_body)
++        {:ok, response["embedding"]}
++
++      {:ok, %{status_code: status_code, body: response_body
